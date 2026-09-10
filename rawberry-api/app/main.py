@@ -20,12 +20,12 @@ memory_store: list[dict[str, Any]] = []
 
 
 @app.get("/")
-def read_root():
+def read_root() -> dict[str, Any]:
     return {
         "message": "RAWBerry API is running",
         "available_endpoints": [
             "/health",
-            "/documents",
+            "/get",
             "/chat",
             "/ingest",
         ],
@@ -33,14 +33,14 @@ def read_root():
 
 
 @app.get("/health")
-def health():
+def health() -> dict[str, str]:
     return {
         "status": "healthy"
     }
 
 
-@app.get("/documents")
-def get_documents():
+@app.get("/get")
+def get_items() -> dict[str, Any]:
     return {
         "items": memory_store,
         "count": len(memory_store),
@@ -48,7 +48,7 @@ def get_documents():
 
 
 @app.post("/chat")
-def chat(request: ChatRequest):
+def chat(request: ChatRequest) -> dict[str, Any]:
     return {
         "reply": f"You said: {request.message}",
         "recent_items": memory_store[-3:],
@@ -56,7 +56,7 @@ def chat(request: ChatRequest):
 
 
 @app.post("/ingest")
-def ingest(request: IngestRequest):
+def ingest(request: IngestRequest) -> dict[str, Any]:
     item = {
         "id": str(uuid4()),
         "text": request.text,
