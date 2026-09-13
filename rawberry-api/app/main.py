@@ -1,72 +1,118 @@
 from typing import Any
 from uuid import uuid4
 
-from fastapi import FastAPI
-from pydantic import BaseModel
+from fastapi import Depends, FastAPI, Request, status
+from pydantic import BaseModel, Field
 
-app = FastAPI(title="RAWBerry API Starter")
+
+class HealthResponse(BaseModel):
+    status: str = "healthy"
+
+
+class ItemRecord(BaseModel):
+    id: str
+    text: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RootResponse(BaseModel):
+    message: str
+    available_endpoints: list[str]
+
+
+class GetItemsResponse(BaseModel):
+    items: list[ItemRecord]
+    count: int
 
 
 class ChatRequest(BaseModel):
-    message: str
+    message: str = Field(..., min_length=1)
+
+
+class ChatResponse(BaseModel):
+    reply: str
+    recent_items: list[ItemRecord]
 
 
 class IngestRequest(BaseModel):
-    text: str
+    text: str = Field(..., min_length=1)
     metadata: dict[str, Any] | None = None
 
 
-memory_store: list[dict[str, Any]] = []
+class IngestResponse(BaseModel):
+    message: str
+    item: ItemRecord
+    count: int
 
 
-@app.get("/")
-def read_root() -> dict[str, Any]:
-    return {
-        "message": "RAWBerry API is running",
-        "available_endpoints": [
-            "/health",
-            "/get",
-            "/chat",
-            "/ingest",
-        ],
-    }
+class InMemoryStore:
+    def __init__(self) -> None:
+        self._items: list[dict[str, Any]] = []
+
+    def add(self, item: dict[str, Any]) -> None:
+        self._items.append(item)
+
+    def list_items(self) -> list[dict[str, Any]]:
+        return self._items
+
+    def recent_items(self, count: int = 3) -> list[dict[str, Any]]:
+        return self._items[-count:]
 
 
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {
-        "status": "healthy"
-    }
+def get_store(request: Request) -> InMemoryStore:
+    return request.app.state.store
 
 
-@app.get("/get")
-def get_items() -> dict[str, Any]:
-    return {
-        "items": memory_store,
-        "count": len(memory_store),
-    }
+def create_app() -> FastAPI:
+    app = FastAPI(title="RAWBerry API Starter")
+    app.state.store = InMemoryStore()
+
+    @app.get("/", response_model=RootResponse)
+    def read_root() -> RootResponse:
+        return RootResponse(
+            message="RAWBerry API is running",
+            available_endpoints=[
+                "/health",
+                "/get",
+                "/chat",
+                "/ingest",
+            ],
+        )
+
+    @app.get("/health", response_model=HealthResponse)
+    def health() -> HealthResponse:
+        return HealthResponse(status="healthy")
+
+    @app.get("/get", response_model=GetItemsResponse)
+    def get_items(store: InMemoryStore = Depends(get_store)) -> GetItemsResponse:
+        items = [ItemRecord(**item) for item in store.list_items()]
+        return GetItemsResponse(items=items, count=len(items))
+
+    @app.post("/chat", response_model=ChatResponse)
+    def chat(request: ChatRequest, store: InMemoryStore = Depends(get_store)) -> ChatResponse:
+        recent_items = [ItemRecord(**item) for item in store.recent_items(3)]
+        return ChatResponse(
+            reply=f"You said: {request.message}",
+            recent_items=recent_items,
+        )
+
+    @app.post("/ingest", response_model=IngestResponse, status_code=status.HTTP_201_CREATED)
+    def ingest(request: IngestRequest, store: InMemoryStore = Depends(get_store)) -> IngestResponse:
+        item = ItemRecord(
+            id=str(uuid4()),
+            text=request.text,
+            metadata=request.metadata or {},
+        )
+
+        store.add(item.model_dump())
+
+        return IngestResponse(
+            message="Item ingested successfully",
+            item=item,
+            count=len(store.list_items()),
+        )
+
+    return app
 
 
-@app.post("/chat")
-def chat(request: ChatRequest) -> dict[str, Any]:
-    return {
-        "reply": f"You said: {request.message}",
-        "recent_items": memory_store[-3:],
-    }
-
-
-@app.post("/ingest")
-def ingest(request: IngestRequest) -> dict[str, Any]:
-    item = {
-        "id": str(uuid4()),
-        "text": request.text,
-        "metadata": request.metadata or {},
-    }
-
-    memory_store.append(item)
-
-    return {
-        "message": "Item ingested successfully",
-        "item": item,
-        "count": len(memory_store),
-    }
+app = create_app()
