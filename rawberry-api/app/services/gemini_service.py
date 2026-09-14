@@ -8,6 +8,11 @@ except ModuleNotFoundError:  # pragma: no cover
     genai = None
 
 
+class MockChatClient:
+    def generate_reply(self, message: str) -> str:
+        return f"You said: {message}"
+
+
 class GeminiChatClient:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -28,7 +33,7 @@ class GeminiChatClient:
 
     def generate_reply(self, message: str) -> str:
         if not self.should_use_real_client():
-            return f"You said: {message}"
+            return MockChatClient().generate_reply(message)
 
         if genai is None:
             raise RuntimeError("google-genai is not installed. Install it from requirements.txt.")
@@ -60,9 +65,9 @@ class GeminiChatClient:
             )
             text = getattr(response, "text", None)
             if text:
-                return text.strip() or f"You said: {message}"
-            return str(response).strip() or f"You said: {message}"
+                return text.strip() or MockChatClient().generate_reply(message)
+            return str(response).strip() or MockChatClient().generate_reply(message)
         except Exception:
             if self.settings.use_mock_chat:
-                return f"You said: {message}"
+                return MockChatClient().generate_reply(message)
             raise

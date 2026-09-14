@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 from app.config import Settings
 from app.services.chat_service import ChatService
-from app.services.gemini_service import GeminiChatClient
+from app.services.gemini_service import GeminiChatClient, MockChatClient
 from app.store import InMemoryStore
 
 
@@ -29,6 +29,17 @@ def test_gemini_client_uses_real_client_when_enabled(monkeypatch):
 
     client = GeminiChatClient(settings)
     assert client.generate_reply("hello") == "hi from gemini"
+
+
+def test_chat_service_uses_mock_client_by_default():
+    settings = Settings(gemini_api_key=None, use_mock_chat=True)
+    store = InMemoryStore()
+
+    service = ChatService(store, settings=settings)
+    response = service.generate_reply_from_message("hello")
+
+    assert response == "You said: hello"
+    assert isinstance(service.llm_client, MockChatClient)
 
 
 def test_chat_service_uses_gemini_when_available():
