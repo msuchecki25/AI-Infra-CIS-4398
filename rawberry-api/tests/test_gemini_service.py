@@ -8,14 +8,14 @@ from app.store import InMemoryStore
 
 
 def test_gemini_client_falls_back_to_mock_response_when_disabled():
-    settings = Settings(gemini_api_key=None, use_mock_chat=True)
+    settings = Settings(google_cloud_project=None, use_mock_chat=True)
     client = GeminiChatClient(settings)
 
     assert client.generate_reply("hello") == "You said: hello"
 
 
 def test_gemini_client_uses_real_client_when_enabled(monkeypatch):
-    settings = Settings(gemini_api_key="test-key", use_mock_chat=False)
+    settings = Settings(google_cloud_project="demo-project", use_mock_chat=False)
 
     fake_client = MagicMock()
     fake_response = MagicMock()
@@ -32,7 +32,7 @@ def test_gemini_client_uses_real_client_when_enabled(monkeypatch):
 
 
 def test_chat_service_uses_mock_client_by_default():
-    settings = Settings(gemini_api_key=None, use_mock_chat=True)
+    settings = Settings(google_cloud_project=None, use_mock_chat=True)
     store = InMemoryStore()
 
     service = ChatService(store, settings=settings)

@@ -4,9 +4,9 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Settings:
-    gemini_api_key: str | None = None
     gemini_model: str = "gemini-2.0-flash"
-    gemini_api_base_url: str = "https://generativelanguage.googleapis.com"
+    google_cloud_project: str | None = None
+    google_cloud_location: str = "us-central1"
     use_mock_chat: bool = True
 
     @classmethod
@@ -14,13 +14,16 @@ class Settings:
         raw_use_mock = os.getenv("USE_MOCK_CHAT", "true").strip().lower()
         use_mock_chat = raw_use_mock not in {"false", "0", "no", "off"}
 
+        project = (
+            os.getenv("GOOGLE_CLOUD_PROJECT")
+            or os.getenv("GCLOUD_PROJECT")
+            or os.getenv("GOOGLE_CLOUD_PROJECT_ID")
+        )
+
         return cls(
-            gemini_api_key=os.getenv("GEMINI_API_KEY"),
             gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
-            gemini_api_base_url=os.getenv(
-                "GEMINI_API_BASE_URL",
-                "https://generativelanguage.googleapis.com",
-            ),
+            google_cloud_project=project,
+            google_cloud_location=os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1"),
             use_mock_chat=use_mock_chat,
         )
 

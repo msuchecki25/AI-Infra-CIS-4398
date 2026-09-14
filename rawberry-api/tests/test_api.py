@@ -91,9 +91,8 @@ def test_chat_route_uses_mock_fallback_when_disabled(monkeypatch):
 
 def test_chat_route_uses_configured_gemini_client(monkeypatch):
     monkeypatch.setenv("USE_MOCK_CHAT", "false")
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "demo-project")
 
-    from app import services
     from app.services import chat_service as chat_service_module
 
     fake_llm = MagicMock()
