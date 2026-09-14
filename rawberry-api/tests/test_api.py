@@ -58,7 +58,12 @@ def test_ingest_and_get_round_trip():
     assert get_response.json()["count"] == 1
 
 
-def test_chat_uses_typed_reply():
+def test_chat_uses_typed_reply(monkeypatch):
+    monkeypatch.setenv("USE_MOCK_CHAT", "true")
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    monkeypatch.delenv("GCLOUD_PROJECT", raising=False)
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT_ID", raising=False)
+
     app = create_app()
     client = TestClient(app)
     client.post("/ingest", json={"text": "first item"})

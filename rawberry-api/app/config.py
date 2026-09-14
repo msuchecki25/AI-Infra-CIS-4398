@@ -4,9 +4,9 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Settings:
-    gemini_model: str = "gemini-2.0-flash"
+    gemini_model: str = "gemini-2.5-flash"
     google_cloud_project: str | None = None
-    google_cloud_location: str = "us-central1"
+    google_cloud_location: str = "global"
     use_mock_chat: bool = True
 
     @classmethod
@@ -21,9 +21,9 @@ class Settings:
         )
 
         return cls(
-            gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
+            gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
             google_cloud_project=project,
-            google_cloud_location=os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1"),
+            google_cloud_location=os.getenv("GOOGLE_CLOUD_LOCATION", "global"),
             use_mock_chat=use_mock_chat,
         )
 

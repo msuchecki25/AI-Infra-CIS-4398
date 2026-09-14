@@ -46,7 +46,7 @@ class GeminiChatClient:
         location = (
             self.settings.google_cloud_location
             or os.getenv("GOOGLE_CLOUD_LOCATION")
-            or "us-central1"
+            or "global"
         )
 
         try:
