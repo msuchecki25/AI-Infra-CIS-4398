@@ -10,14 +10,17 @@ except ModuleNotFoundError:  # pragma: no cover
 
 class MockChatClient:
     def generate_reply(self, message: str) -> str:
+        # Return an echo response without calling Gemini.
         return f"You said: {message}"
 
 
 class GeminiChatClient:
     def __init__(self, settings: Settings | None = None) -> None:
+        # Store the settings used by the Gemini client.
         self.settings = settings or get_settings()
 
     def _get_project_id(self) -> str | None:
+        # Find the Google Cloud project ID in settings or environment variables.
         return (
             self.settings.google_cloud_project
             or os.getenv("GOOGLE_CLOUD_PROJECT")
@@ -26,11 +29,13 @@ class GeminiChatClient:
         )
 
     def should_use_real_client(self) -> bool:
+        # Check whether real Gemini calls are enabled and configured.
         if self.settings.use_mock_chat:
             return False
         return bool(self._get_project_id())
 
     def generate_reply(self, message: str) -> str:
+        # Generate a Gemini response or use the configured mock fallback.
         if not self.should_use_real_client():
             return MockChatClient().generate_reply(message)
 

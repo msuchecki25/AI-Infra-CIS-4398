@@ -72,7 +72,27 @@ Associate the ADC credentials with `rawberryapi` for quota and billing purposes:
 gcloud auth application-default set-quota-project rawberryapi
 ```
 
-## 6. Run the API locally
+## 6. Enable real Gemini chat
+
+The API uses the mock response by default. In the same PowerShell window where you will run Uvicorn, set:
+
+```powershell
+$env:USE_MOCK_CHAT = "false"
+$env:GOOGLE_CLOUD_PROJECT = "rawberryapi"
+$env:GOOGLE_CLOUD_LOCATION = "global"
+```
+
+These variables remain available until you close the PowerShell window. If you open a new window, set them again. To save them permanently for future PowerShell windows, run:
+
+```powershell
+setx USE_MOCK_CHAT "false"
+setx GOOGLE_CLOUD_PROJECT "rawberryapi"
+setx GOOGLE_CLOUD_LOCATION "global"
+```
+
+After using `setx`, open a new PowerShell window. `.env.example` is only a template and is not loaded automatically by the current application.
+
+## 7. Run the API locally
 
 From the repository root, run:
 
