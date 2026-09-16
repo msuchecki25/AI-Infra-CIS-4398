@@ -22,10 +22,25 @@ class GetItemsResponse(BaseModel):
     items: list[ItemRecord]
     count: int
 
+#information about the user's session, gives context
+class InstanceData(BaseModel):
+    window: int
+    agent: str
 
-class ChatRequest(BaseModel):
+#push a new query to the AI
+class QueryRequest(BaseModel):
+    userid: int
+    data: InstanceData
     message: str = Field(..., min_length=1)
 
+#whether or not the user's query was received and being processed 0/1/2 received/not received
+class QueryResponse(BaseModel):
+    status: int
+
+#sees if the chat response has been completed
+class ChatRequest(BaseModel):
+    userid: int
+    data: InstanceData
 
 class ChatResponse(BaseModel):
     reply: str
@@ -33,6 +48,7 @@ class ChatResponse(BaseModel):
 
 
 class IngestRequest(BaseModel):
+    userid: int
     text: str = Field(..., min_length=1)
     metadata: dict[str, Any] | None = None
 
@@ -41,3 +57,18 @@ class IngestResponse(BaseModel):
     message: str
     item: ItemRecord
     count: int
+
+#for signing in (not robust but meets features)
+class AuthenticationRequest(BaseModel):
+    username: str
+    password: str
+
+#conf 0/1 success/fail ... auth 0/1/2 user/admin/other ... userid identifier
+class AuthenticationRespone(BaseModel):
+    conf: int
+    auth: int
+    userid: int
+
+
+
+class 
