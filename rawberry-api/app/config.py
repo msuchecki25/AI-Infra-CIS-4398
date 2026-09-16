@@ -10,6 +10,7 @@ class Settings:
     use_mock_chat: bool = True
 
     @classmethod
+    # Read application settings from environment variables.
     def from_env(cls) -> "Settings":
         raw_use_mock = os.getenv("USE_MOCK_CHAT", "true").strip().lower()
         use_mock_chat = raw_use_mock not in {"false", "0", "no", "off"}
@@ -28,6 +29,7 @@ class Settings:
         )
 
 
+# Return the current application settings.
 def get_settings() -> Settings:
     return Settings.from_env()
 

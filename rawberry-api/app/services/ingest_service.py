@@ -6,9 +6,11 @@ from app.store import InMemoryStore
 
 class IngestService:
     def __init__(self, store: InMemoryStore) -> None:
+        # Store the location where ingested items will be saved.
         self.store = store
 
     def ingest(self, request: IngestRequest) -> IngestResponse:
+        # Create, save, and return an item from the submitted text.
         item = ItemRecord(
             id=str(uuid4()),
             text=request.text,

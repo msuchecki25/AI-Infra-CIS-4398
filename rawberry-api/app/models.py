@@ -6,7 +6,8 @@ from pydantic import BaseModel, Field
 class HealthResponse(BaseModel):
     status: str = "healthy"
 
-
+# Represents one piece of text ingested by the API.
+# In the future, this may represent a document chunk stored in a vector database.
 class ItemRecord(BaseModel):
     id: str
     text: str
