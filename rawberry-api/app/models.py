@@ -42,6 +42,7 @@ class QueryResponse(BaseModel):
 class ChatRequest(BaseModel):
     userid: int
     data: InstanceData
+    message: str = Field(..., min_length=1)
 
 class ChatResponse(BaseModel):
     reply: str
@@ -69,7 +70,3 @@ class AuthenticationRespone(BaseModel):
     conf: int
     auth: int
     userid: int
-
-
-
-class 

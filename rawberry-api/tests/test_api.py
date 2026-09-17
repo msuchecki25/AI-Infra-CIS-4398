@@ -44,7 +44,7 @@ def test_ingest_and_get_round_trip():
 
     ingest_response = client.post(
         "/ingest",
-        json={"text": "hello world", "metadata": {"source": "demo"}},
+        json={"userid": 1, "text": "hello world", "metadata": {"source": "demo"}},
     )
 
     assert ingest_response.status_code == 201
@@ -66,9 +66,19 @@ def test_chat_uses_typed_reply(monkeypatch):
 
     app = create_app()
     client = TestClient(app)
-    client.post("/ingest", json={"text": "first item"})
+    client.post(
+        "/ingest",
+        json={"userid": 1, "text": "first item"},
+    )
 
-    response = client.post("/chat", json={"message": "hello"})
+    response = client.post(
+        "/chat",
+        json={
+            "userid": 1,
+            "data": {"window": 3, "agent": "test"},
+            "message": "hello",
+        },
+    )
     assert response.status_code == 200
     payload = response.json()
     assert payload["reply"] == "You said: hello"
@@ -78,7 +88,14 @@ def test_chat_uses_typed_reply(monkeypatch):
 def test_invalid_message_is_rejected():
     app = create_app()
     client = TestClient(app)
-    response = client.post("/chat", json={"message": ""})
+    response = client.post(
+        "/chat",
+        json={
+            "userid": 1,
+            "data": {"window": 3, "agent": "test"},
+            "message": "",
+        },
+    )
     assert response.status_code == 422
 
 
@@ -89,7 +106,14 @@ def test_chat_route_uses_mock_fallback_when_disabled(monkeypatch):
     app = create_app()
     client = TestClient(app)
 
-    response = client.post("/chat", json={"message": "fallback check"})
+    response = client.post(
+        "/chat",
+        json={
+            "userid": 1,
+            "data": {"window": 3, "agent": "test"},
+            "message": "fallback check",
+        },
+    )
     assert response.status_code == 200
     assert response.json()["reply"] == "You said: fallback check"
 
@@ -107,6 +131,13 @@ def test_chat_route_uses_configured_gemini_client(monkeypatch):
     app = create_app()
     client = TestClient(app)
 
-    response = client.post("/chat", json={"message": "hello"})
+    response = client.post(
+        "/chat",
+        json={
+            "userid": 1,
+            "data": {"window": 3, "agent": "test"},
+            "message": "hello",
+        },
+    )
     assert response.status_code == 200
     assert response.json()["reply"] == "gemini reply"
