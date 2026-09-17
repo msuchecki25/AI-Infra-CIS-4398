@@ -1,0 +1,7 @@
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_postgres import PGVector
+import psycopg 
+from pgvector.psycopg import register_vector
+from langchain_community.document_loaders import PyPDFLoader
+from dotenv import load_dotenv
