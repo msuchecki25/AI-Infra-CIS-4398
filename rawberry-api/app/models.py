@@ -2,6 +2,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+#this overall class is used to define the data models for the API, 
+# including request and response models for various endpoints.
+#this helps with data validation, serialization, and documentation of 
+# the API's expected inputs and outputs.
 
 class HealthResponse(BaseModel):
     status: str = "healthy"

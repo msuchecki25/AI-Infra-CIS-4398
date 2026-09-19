@@ -1,6 +1,8 @@
 from typing import Any
 
-
+#A temporary storage class used by the FastAPI backend 
+# to test ingestion and retrieval before integrating the 
+# real vector database and RAG retrieval system.
 class InMemoryStore:
     def __init__(self) -> None:
         # Start with an empty temporary collection.

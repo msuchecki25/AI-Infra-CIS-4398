@@ -7,13 +7,14 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     genai = None
 
-
 class MockChatClient:
     def generate_reply(self, message: str) -> str:
         # Return an echo response without calling Gemini.
         return f"You said: {message}"
 
-
+# This class handles communication with Gemini through Vertex AI.
+# Currently, a new Google GenAI client is created for each generate_reply()
+# call. In the future, the client could be initialized once and reused.
 class GeminiChatClient:
     def __init__(self, settings: Settings | None = None) -> None:
         # Store the settings used by the Gemini client.

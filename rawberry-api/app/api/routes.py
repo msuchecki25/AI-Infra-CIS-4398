@@ -51,7 +51,8 @@ def read_root() -> RootResponse:
 def health() -> HealthResponse:
     return HealthResponse(status="healthy")
 
-
+#temporary way to get items from the store, will be replaced with RAG retrieval and 
+# vector database integration in the future
 @router.get("/get", response_model=GetItemsResponse)
 # Return all items currently stored in memory.
 def get_items(store: InMemoryStore = Depends(get_store)) -> GetItemsResponse:

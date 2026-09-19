@@ -3,7 +3,12 @@ from app.models import ChatRequest, ChatResponse, ItemRecord
 from app.services.gemini_service import GeminiChatClient, MockChatClient
 from app.store import InMemoryStore
 
-
+#API team works on this service 
+# this class is responsible for handling chat requests and generating responses 
+# using either the Gemini client or a mock client.
+#this class is currently missing the RAG retrieval and vector database integration 
+# (to send the recent items to the LLM for context), 
+# which will be added in the future.
 class ChatService:
     def __init__(
         self,
@@ -24,6 +29,7 @@ class ChatService:
 
     def get_recent_items(self) -> list[ItemRecord]:
         # Return the three most recently ingested items.
+        # This will be done through a vector database and RAG retrieval in the future.
         return [ItemRecord(**item) for item in self.store.recent_items(3)]
 
     def generate_reply_from_message(self, message: str) -> str:

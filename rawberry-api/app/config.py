@@ -1,7 +1,8 @@
 import os
 from dataclasses import dataclass
 
-
+#this class tells the GeminiChatClient whether to use a real Gemini client or a mock client
+#  based on the settings and environment variables.
 @dataclass(frozen=True)
 class Settings:
     gemini_model: str = "gemini-2.5-flash"
