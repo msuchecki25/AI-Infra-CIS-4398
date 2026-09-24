@@ -141,3 +141,37 @@ def test_chat_route_uses_configured_gemini_client(monkeypatch):
     )
     assert response.status_code == 200
     assert response.json()["reply"] == "gemini reply"
+
+
+def test_upload_endpoint_accepts_text_file_and_returns_chunk_summary():
+    app = create_app()
+    client = TestClient(app)
+
+    response = client.post(
+        "/upload",
+        files=[("files", ("sample.txt", b"alpha beta gamma delta", "text/plain"))],
+        data={"owner_id": "user-123"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["status"] == "uploaded"
+    assert payload["filename"] == "sample.txt"
+    assert payload["chunk_count"] >= 1
+    assert payload["document_id"]
+
+
+def test_upload_endpoint_rejects_unsupported_file_type():
+    app = create_app()
+    client = TestClient(app)
+
+    response = client.post(
+        "/upload",
+        files=[("files", ("sample.csv", b"a,b,c", "text/csv"))],
+    )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["success"] is False
+    assert payload["error_code"] == "INVALID_FILE_TYPE"

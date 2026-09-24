@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, Request, status
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile, status
 
 from app.models import (
     ChatRequest,
@@ -9,6 +11,8 @@ from app.models import (
     IngestResponse,
     ItemRecord,
     RootResponse,
+    UploadErrorResponse,
+    UploadResponse,
 )
 from app.services.chat_service import ChatService
 from app.services.ingest_service import IngestService
@@ -70,3 +74,16 @@ def chat(request: ChatRequest, service: ChatService = Depends(get_chat_service))
 # Store the submitted text and return the new item.
 def ingest(request: IngestRequest, service: IngestService = Depends(get_ingest_service)) -> IngestResponse:
     return service.ingest(request)
+
+
+@router.post(
+    "/upload",
+    response_model=UploadResponse,
+    responses={400: {"model": UploadErrorResponse}},
+)
+def upload_document(
+    files: Annotated[list[UploadFile], File(...)],
+    owner_id: Annotated[str | None, Form()] = None,
+    service: IngestService = Depends(get_ingest_service),
+) -> UploadResponse:
+    return service.upload_document(files, owner_id=owner_id)
