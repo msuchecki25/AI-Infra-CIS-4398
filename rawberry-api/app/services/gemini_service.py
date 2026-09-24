@@ -10,6 +10,8 @@ except ModuleNotFoundError:  # pragma: no cover
 class MockChatClient:
     def generate_reply(self, message: str) -> str:
         # Return an echo response without calling Gemini.
+        if "Use the following document context" in message:
+            return message
         return f"You said: {message}"
 
 # This class handles communication with Gemini through Vertex AI.

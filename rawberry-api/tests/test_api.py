@@ -175,3 +175,29 @@ def test_upload_endpoint_rejects_unsupported_file_type():
     payload = response.json()
     assert payload["success"] is False
     assert payload["error_code"] == "INVALID_FILE_TYPE"
+
+
+def test_chat_uses_retrieved_document_chunks_as_context():
+    app = create_app()
+    client = TestClient(app)
+
+    upload = client.post(
+        "/upload",
+        files=[("files", ("sample.txt", b"alpha beta gamma delta", "text/plain"))],
+        data={"owner_id": "user-123"},
+    )
+    assert upload.status_code == 200
+
+    response = client.post(
+        "/chat",
+        json={
+            "userid": 1,
+            "data": {"window": 3, "agent": "test"},
+            "message": "What is gamma?",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "gamma" in payload["reply"].lower()
+    assert "alpha beta gamma delta" in payload["reply"].lower()

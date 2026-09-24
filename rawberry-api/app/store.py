@@ -33,3 +33,32 @@ class InMemoryStore:
 
     def list_chunks(self) -> list[dict[str, Any]]:
         return list(self._chunks)
+
+    def search_chunks(self, query: str, limit: int = 3) -> list[dict[str, Any]]:
+        if not query:
+            return []
+
+        import re
+
+        query_terms = {
+            re.sub(r"[^a-z0-9]", "", term.lower())
+            for term in query.split()
+            if re.sub(r"[^a-z0-9]", "", term.lower())
+        }
+        scored_chunks: list[tuple[float, dict[str, Any]]] = []
+
+        for chunk in self._chunks:
+            chunk_text = str(chunk.get("text", "")).lower()
+            chunk_terms = {
+                re.sub(r"[^a-z0-9]", "", term)
+                for term in chunk_text.split()
+                if re.sub(r"[^a-z0-9]", "", term)
+            }
+            match_count = sum(1 for term in query_terms if term in chunk_terms)
+            if match_count == 0:
+                continue
+            score = match_count + (0.1 if chunk.get("document_id") else 0)
+            scored_chunks.append((score, chunk))
+
+        scored_chunks.sort(key=lambda item: item[0], reverse=True)
+        return [chunk for _, chunk in scored_chunks[:limit]]
