@@ -8,14 +8,16 @@ class InMemoryStore:
         # Start with an empty temporary collection.
         self._items: list[dict[str, Any]] = []
         self._documents: list[dict[str, Any]] = []
+        self._document_contents: dict[str, bytes] = {}
         self._chunks: list[dict[str, Any]] = []
 
     def add(self, item: dict[str, Any]) -> None:
         # Add one item to the collection.
         self._items.append(item)
 
-    def add_document(self, document: dict[str, Any]) -> None:
+    def add_document(self, document: dict[str, Any], content: bytes) -> None:
         self._documents.append(document)
+        self._document_contents[str(document["id"])] = content
 
     def add_chunk(self, chunk: dict[str, Any]) -> None:
         self._chunks.append(chunk)
@@ -30,6 +32,9 @@ class InMemoryStore:
 
     def list_documents(self) -> list[dict[str, Any]]:
         return list(self._documents)
+
+    def get_document_content(self, document_id: str) -> bytes | None:
+        return self._document_contents.get(document_id)
 
     def list_chunks(self) -> list[dict[str, Any]]:
         return list(self._chunks)

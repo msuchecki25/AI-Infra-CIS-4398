@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from uuid import uuid4
 
-from fastapi import HTTPException, UploadFile
+from fastapi import HTTPException, UploadFile, status
 
 from app.models import DocumentChunk, DocumentRecord, IngestRequest, IngestResponse, ItemRecord, UploadResponse
 from app.store import InMemoryStore
@@ -38,14 +38,32 @@ class IngestService:
             count=len(self.store.list_items()),
         )
 
-    def _normalize_text(self, filename: str, raw_bytes: bytes) -> str:
+    def _validate_file_content(self, filename: str, raw_bytes: bytes) -> str | None:
         ext = os.path.splitext(filename)[1].lower()
         if ext == ".txt":
-            return raw_bytes.decode("utf-8", errors="replace")
-        if ext in {".pdf", ".docx"}:
-            # Provisional implementation: treat any non-txt binary as raw text for now.
-            return raw_bytes.decode("utf-8", errors="replace")
-        raise HTTPException(status_code=400, detail="Unsupported file type")
+            try:
+                return raw_bytes.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "success": False,
+                        "error_code": "INVALID_TEXT_ENCODING",
+                        "message": "Text files must use UTF-8 encoding.",
+                    },
+                ) from exc
+        if ext == ".pdf" and raw_bytes.startswith(b"%PDF-"):
+            return None
+        if ext == ".docx" and raw_bytes.startswith(b"PK\x03\x04"):
+            return None
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "success": False,
+                "error_code": "INVALID_FILE_CONTENT",
+                "message": "File content does not match its filename extension.",
+            },
+        )
 
     def _chunk_text(self, document_id: str, owner_id: str | None, text: str) -> list[DocumentChunk]:
         max_chars = 900
@@ -66,48 +84,74 @@ class IngestService:
             )
         return chunks
 
-    def upload_document(self, files: list[UploadFile], owner_id: str | None = None) -> UploadResponse:
+    def upload_document(self, files: list[UploadFile], owner_id: str | None = None) -> list[UploadResponse]:
         if not files:
-            raise HTTPException(status_code=400, detail="At least one file is required")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"success": False, "error_code": "NO_FILES", "message": "At least one file is required."},
+            )
 
-        uploaded_file = files[0]
-        filename = uploaded_file.filename or "upload.bin"
-        ext = os.path.splitext(filename)[1].lower()
+        validated_files: list[tuple[UploadFile, str, str, int]] = []
+        for uploaded_file in files:
+            filename = uploaded_file.filename or "upload.bin"
+            ext = os.path.splitext(filename)[1].lower()
+            if ext not in self.ALLOWED_EXTENSIONS:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "success": False,
+                        "error_code": "INVALID_FILE_TYPE",
+                        "message": "Only PDF, DOCX, and TXT files are supported.",
+                    },
+                )
 
-        if ext not in self.ALLOWED_EXTENSIONS:
-            raise HTTPException(status_code=400, detail={"success": False, "error_code": "INVALID_FILE_TYPE", "message": "Only PDF, DOCX, and TXT files are supported."})
+            raw_bytes = uploaded_file.file.read(self.MAX_FILE_SIZE_BYTES + 1)
+            if not raw_bytes:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={"success": False, "error_code": "EMPTY_FILE", "message": "Uploaded file is empty."},
+                )
+            if len(raw_bytes) > self.MAX_FILE_SIZE_BYTES:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail={"success": False, "error_code": "FILE_TOO_LARGE", "message": "File exceeds 25MB limit."},
+                )
 
-        raw_bytes = uploaded_file.file.read()
-        if len(raw_bytes) == 0:
-            raise HTTPException(status_code=400, detail={"success": False, "error_code": "EMPTY_FILE", "message": "Uploaded file is empty."})
-        if len(raw_bytes) > self.MAX_FILE_SIZE_BYTES:
-            raise HTTPException(status_code=400, detail={"success": False, "error_code": "FILE_TOO_LARGE", "message": "File exceeds 25MB limit."})
+            self._validate_file_content(filename, raw_bytes)
+            uploaded_file.file.seek(0)
+            validated_files.append((uploaded_file, filename, ext, len(raw_bytes)))
 
-        document_id = str(uuid4())
-        text = self._normalize_text(filename, raw_bytes)
-        chunks = self._chunk_text(document_id, owner_id, text)
+        responses: list[UploadResponse] = []
+        for uploaded_file, filename, ext, size_bytes in validated_files:
+            raw_bytes = uploaded_file.file.read(self.MAX_FILE_SIZE_BYTES + 1)
+            text = self._validate_file_content(filename, raw_bytes)
+            document_id = str(uuid4())
+            chunks = self._chunk_text(document_id, owner_id, text) if text is not None else []
+            document = DocumentRecord(
+                id=document_id,
+                filename=filename,
+                file_type=ext,
+                size_bytes=size_bytes,
+                owner_id=owner_id,
+                chunk_count=len(chunks),
+                embedding_status="pending",
+                metadata={"source": "upload_endpoint"},
+            )
 
-        document = DocumentRecord(
-            id=document_id,
-            filename=filename,
-            file_type=ext,
-            size_bytes=len(raw_bytes),
-            owner_id=owner_id,
-            chunk_count=len(chunks),
-            embedding_status="pending",
-            metadata={"source": "upload_endpoint"},
-        )
+            self.store.add_document(document.model_dump(), content=raw_bytes)
+            for chunk in chunks:
+                self.store.add_chunk(chunk.model_dump())
 
-        self.store.add_document(document.model_dump())
-        for chunk in chunks:
-            self.store.add_chunk(chunk.model_dump())
+            responses.append(
+                UploadResponse(
+                    success=True,
+                    document_id=document.id,
+                    filename=document.filename,
+                    status="uploaded",
+                    chunk_count=len(chunks),
+                    message="Document uploaded successfully; processing is pending.",
+                    embedding_status="pending",
+                )
+            )
 
-        return UploadResponse(
-            success=True,
-            document_id=document.id,
-            filename=document.filename,
-            status="uploaded",
-            chunk_count=len(chunks),
-            message="Document uploaded and chunked successfully",
-            embedding_status="pending",
-        )
+        return responses

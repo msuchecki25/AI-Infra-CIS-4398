@@ -78,12 +78,15 @@ def ingest(request: IngestRequest, service: IngestService = Depends(get_ingest_s
 
 @router.post(
     "/upload",
-    response_model=UploadResponse,
-    responses={400: {"model": UploadErrorResponse}},
+    response_model=list[UploadResponse],
+    responses={
+        400: {"model": UploadErrorResponse},
+        413: {"model": UploadErrorResponse},
+    },
 )
 def upload_document(
     files: Annotated[list[UploadFile], File(...)],
     owner_id: Annotated[str | None, Form()] = None,
     service: IngestService = Depends(get_ingest_service),
-) -> UploadResponse:
+) -> list[UploadResponse]:
     return service.upload_document(files, owner_id=owner_id)
