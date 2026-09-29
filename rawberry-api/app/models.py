@@ -49,6 +49,15 @@ class ChatResponse(BaseModel):
     recent_items: list[ItemRecord]
 
 
+class SystemPromptRequest(BaseModel):
+    prompt: str = Field(default="", max_length=2000)
+
+
+class SystemPromptResponse(BaseModel):
+    userid: int
+    prompt: str
+
+
 class IngestRequest(BaseModel):
     userid: int
     text: str = Field(..., min_length=1)

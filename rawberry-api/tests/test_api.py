@@ -85,6 +85,49 @@ def test_chat_uses_typed_reply(monkeypatch):
     assert len(payload["recent_items"]) == 1
 
 
+def test_system_prompt_can_be_read_updated_and_cleared():
+    client = TestClient(create_app())
+
+    initial = client.get("/users/42/system-prompt")
+    assert initial.status_code == 200
+    assert initial.json() == {"userid": 42, "prompt": ""}
+
+    updated = client.put("/users/42/system-prompt", json={"prompt": "Be concise."})
+    assert updated.status_code == 200
+    assert updated.json() == {"userid": 42, "prompt": "Be concise."}
+    assert client.get("/users/43/system-prompt").json()["prompt"] == ""
+
+    cleared = client.put("/users/42/system-prompt", json={"prompt": ""})
+    assert cleared.status_code == 200
+    assert cleared.json()["prompt"] == ""
+
+
+def test_system_prompt_rejects_values_over_limit():
+    client = TestClient(create_app())
+
+    response = client.put("/users/42/system-prompt", json={"prompt": "x" * 2001})
+
+    assert response.status_code == 422
+
+
+def test_chat_includes_saved_user_system_prompt():
+    client = TestClient(create_app())
+    client.put("/users/42/system-prompt", json={"prompt": "Be concise."})
+
+    response = client.post(
+        "/chat",
+        json={
+            "userid": 42,
+            "data": {"window": 3, "agent": "test"},
+            "message": "Explain this.",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Be concise." in response.json()["reply"]
+    assert "Explain this." in response.json()["reply"]
+
+
 def test_invalid_message_is_rejected():
     app = create_app()
     client = TestClient(app)

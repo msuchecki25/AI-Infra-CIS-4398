@@ -26,13 +26,22 @@ class ChatService:
         # Return the three most recently ingested items.
         return [ItemRecord(**item) for item in self.store.recent_items(3)]
 
-    def generate_reply_from_message(self, message: str) -> str:
+    def generate_reply_from_message(self, message: str, system_prompt: str = "") -> str:
         # Send the message to the selected chat client.
+        if system_prompt:
+            message = (
+                "User response preferences (follow when relevant):\n"
+                f"{system_prompt}\n\n"
+                f"User message:\n{message}"
+            )
         return self.llm_client.generate_reply(message)
 
     def generate_reply(self, request: ChatRequest) -> ChatResponse:
         # Return the reply along with recent stored items.
         return ChatResponse(
-            reply=self.generate_reply_from_message(request.message),
+            reply=self.generate_reply_from_message(
+                request.message,
+                system_prompt=self.store.get_system_prompt(request.userid),
+            ),
             recent_items=self.get_recent_items(),
         )
