@@ -85,6 +85,55 @@ def test_chat_uses_typed_reply(monkeypatch):
     assert len(payload["recent_items"]) == 1
 
 
+def test_chat_stream_emits_lifecycle_status_and_final_response(monkeypatch):
+    monkeypatch.setenv("USE_MOCK_CHAT", "true")
+    app = create_app()
+    client = TestClient(app)
+
+    with client.stream(
+        "POST",
+        "/chat/stream",
+        json={
+            "userid": 1,
+            "data": {"window": 3, "agent": "test"},
+            "message": "hello",
+        },
+    ) as response:
+        body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert body.index('"status":"received"') < body.index('"status":"generating"')
+    assert body.index('"status":"generating"') < body.index('"status":"completed"')
+    assert '"reply":"You said: hello"' in body
+
+
+def test_chat_stream_emits_failure_status_without_exposing_exception():
+    from app.api.routes import get_chat_service
+
+    class FailingChatService:
+        def generate_reply(self, request):
+            raise RuntimeError("private provider detail")
+
+    app = create_app()
+    app.dependency_overrides[get_chat_service] = lambda: FailingChatService()
+    client = TestClient(app)
+
+    response = client.post(
+        "/chat/stream",
+        json={
+            "userid": 1,
+            "data": {"window": 3, "agent": "test"},
+            "message": "hello",
+        },
+    )
+
+    assert response.status_code == 200
+    assert '"status":"failed"' in response.text
+    assert "The response could not be generated." in response.text
+    assert "private provider detail" not in response.text
+
+
 def test_invalid_message_is_rejected():
     app = create_app()
     client = TestClient(app)

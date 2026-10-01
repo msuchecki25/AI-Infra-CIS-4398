@@ -16,6 +16,7 @@ This backend is currently a starter API with in-memory storage.
 - `GET /health` — health check
 - `GET /get` — returns ingested items
 - `POST /chat` — accepts a chat message and returns a simple reply
+- `POST /chat/stream` — streams chat lifecycle status and the final reply as Server-Sent Events
 - `POST /ingest` — stores text and optional metadata
 
 ## Current responsibilities of this folder
@@ -125,8 +126,21 @@ The current prototype contains approximately these endpoints:
 GET  /
 GET  /get
 POST /chat
+POST /chat/stream
 POST /ingest
 ```
+
+## Chat status stream
+
+`POST /chat/stream` accepts the same JSON body as `POST /chat` and returns
+`text/event-stream`. Each event uses the `status` event name and a JSON payload
+containing a `request_id`, `status`, and `message`. The lifecycle statuses are
+`received`, `generating`, and either `completed` or `failed`. The `completed`
+event also includes the normal chat response in its `response` field.
+
+This endpoint reports request and generation progress only. Document-specific
+stages such as reading or comparing files can be added when the document
+processing pipeline exposes those events.
 
 The current `/chat` endpoint is a MOCK endpoint.
 

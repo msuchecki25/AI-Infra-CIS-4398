@@ -1,8 +1,13 @@
+import asyncio
+from uuid import uuid4
+
 from fastapi import APIRouter, Depends, Request, status
+from fastapi.responses import StreamingResponse
 
 from app.models import (
     ChatRequest,
     ChatResponse,
+    ChatStatusEvent,
     GetItemsResponse,
     HealthResponse,
     IngestRequest,
@@ -41,6 +46,7 @@ def read_root() -> RootResponse:
             "/health",
             "/get",
             "/chat",
+            "/chat/stream",
             "/ingest",
         ],
     )
@@ -64,6 +70,61 @@ def get_items(store: InMemoryStore = Depends(get_store)) -> GetItemsResponse:
 # Generate a response to the user's chat message.
 def chat(request: ChatRequest, service: ChatService = Depends(get_chat_service)) -> ChatResponse:
     return service.generate_reply(request)
+
+
+@router.post(
+    "/chat/stream",
+    response_class=StreamingResponse,
+    responses={200: {"content": {"text/event-stream": {}}}},
+)
+def chat_stream(request: ChatRequest, service: ChatService = Depends(get_chat_service)) -> StreamingResponse:
+    request_id = str(uuid4())
+
+    async def events():
+        yield _format_status_event(
+            ChatStatusEvent(
+                request_id=request_id,
+                status="received",
+                message="Your message was received.",
+            )
+        )
+        yield _format_status_event(
+            ChatStatusEvent(
+                request_id=request_id,
+                status="generating",
+                message="Generating a response.",
+            )
+        )
+        try:
+            response = await asyncio.to_thread(service.generate_reply, request)
+        except Exception:
+            yield _format_status_event(
+                ChatStatusEvent(
+                    request_id=request_id,
+                    status="failed",
+                    message="The response could not be generated.",
+                )
+            )
+            return
+
+        yield _format_status_event(
+            ChatStatusEvent(
+                request_id=request_id,
+                status="completed",
+                message="Response complete.",
+                response=response,
+            )
+        )
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+def _format_status_event(event: ChatStatusEvent) -> str:
+    return f"event: status\ndata: {event.model_dump_json()}\n\n"
 
 
 @router.post("/ingest", response_model=IngestResponse, status_code=status.HTTP_201_CREATED)

@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -51,6 +51,13 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
     recent_items: list[ItemRecord]
+
+
+class ChatStatusEvent(BaseModel):
+    request_id: str
+    status: Literal["received", "generating", "completed", "failed"]
+    message: str
+    response: ChatResponse | None = None
 
 
 class IngestRequest(BaseModel):
