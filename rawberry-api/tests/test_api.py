@@ -190,3 +190,129 @@ def test_chat_route_uses_configured_gemini_client(monkeypatch):
     )
     assert response.status_code == 200
     assert response.json()["reply"] == "gemini reply"
+
+
+def test_upload_endpoint_accepts_text_file_and_returns_chunk_summary():
+    app = create_app()
+    client = TestClient(app)
+
+    response = client.post(
+        "/upload",
+        files=[("files", ("sample.txt", b"alpha beta gamma delta", "text/plain"))],
+        data={"owner_id": "user-123"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()[0]
+    assert payload["success"] is True
+    assert payload["status"] == "uploaded"
+    assert payload["filename"] == "sample.txt"
+    assert payload["chunk_count"] >= 1
+    assert payload["document_id"]
+
+
+def test_upload_endpoint_rejects_unsupported_file_type():
+    app = create_app()
+    client = TestClient(app)
+
+    response = client.post(
+        "/upload",
+        files=[("files", ("sample.csv", b"a,b,c", "text/csv"))],
+    )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["success"] is False
+    assert payload["error_code"] == "INVALID_FILE_TYPE"
+
+
+def test_upload_endpoint_processes_all_files_and_keeps_binary_contents():
+    app = create_app()
+    client = TestClient(app)
+
+    response = client.post(
+        "/upload",
+        files=[
+            ("files", ("sample.txt", b"hello", "text/plain")),
+            ("files", ("sample.pdf", b"%PDF-1.7 binary payload", "application/pdf")),
+        ],
+    )
+
+    assert response.status_code == 200
+    uploads = response.json()
+    assert [upload["filename"] for upload in uploads] == ["sample.txt", "sample.pdf"]
+    assert uploads[1]["chunk_count"] == 0
+    assert app.state.store.get_document_content(uploads[1]["document_id"]) == b"%PDF-1.7 binary payload"
+
+
+def test_upload_endpoint_rejects_invalid_batch_without_storing_partial_results():
+    app = create_app()
+    client = TestClient(app)
+
+    response = client.post(
+        "/upload",
+        files=[
+            ("files", ("valid.txt", b"hello", "text/plain")),
+            ("files", ("invalid.pdf", b"not a PDF", "application/pdf")),
+        ],
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "INVALID_FILE_CONTENT"
+    assert app.state.store.list_documents() == []
+
+
+def test_upload_endpoint_rejects_oversized_file_before_reading_it_all(monkeypatch):
+    from app.services.ingest_service import IngestService
+
+    monkeypatch.setattr(IngestService, "MAX_FILE_SIZE_BYTES", 4)
+    app = create_app()
+    client = TestClient(app)
+
+    response = client.post(
+        "/upload",
+        files=[("files", ("large.txt", b"12345", "text/plain"))],
+    )
+
+    assert response.status_code == 413
+    assert response.json()["error_code"] == "FILE_TOO_LARGE"
+    assert app.state.store.list_documents() == []
+
+
+def test_upload_endpoint_rejects_non_utf8_text():
+    app = create_app()
+    client = TestClient(app)
+
+    response = client.post(
+        "/upload",
+        files=[("files", ("invalid.txt", b"\xff\xfe", "text/plain"))],
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "INVALID_TEXT_ENCODING"
+
+
+def test_chat_uses_retrieved_document_chunks_as_context():
+    app = create_app()
+    client = TestClient(app)
+
+    upload = client.post(
+        "/upload",
+        files=[("files", ("sample.txt", b"alpha beta gamma delta", "text/plain"))],
+        data={"owner_id": "user-123"},
+    )
+    assert upload.status_code == 200
+
+    response = client.post(
+        "/chat",
+        json={
+            "userid": 1,
+            "data": {"window": 3, "agent": "test"},
+            "message": "What is gamma?",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "gamma" in payload["reply"].lower()
+    assert "alpha beta gamma delta" in payload["reply"].lower()

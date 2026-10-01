@@ -1,7 +1,9 @@
 import asyncio
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Request, status
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 
 from app.models import (
@@ -14,6 +16,8 @@ from app.models import (
     IngestResponse,
     ItemRecord,
     RootResponse,
+    UploadErrorResponse,
+    UploadResponse,
 )
 from app.services.chat_service import ChatService
 from app.services.ingest_service import IngestService
@@ -131,3 +135,19 @@ def _format_status_event(event: ChatStatusEvent) -> str:
 # Store the submitted text and return the new item.
 def ingest(request: IngestRequest, service: IngestService = Depends(get_ingest_service)) -> IngestResponse:
     return service.ingest(request)
+
+
+@router.post(
+    "/upload",
+    response_model=list[UploadResponse],
+    responses={
+        400: {"model": UploadErrorResponse},
+        413: {"model": UploadErrorResponse},
+    },
+)
+def upload_document(
+    files: Annotated[list[UploadFile], File(...)],
+    owner_id: Annotated[str | None, Form()] = None,
+    service: IngestService = Depends(get_ingest_service),
+) -> list[UploadResponse]:
+    return service.upload_document(files, owner_id=owner_id)
