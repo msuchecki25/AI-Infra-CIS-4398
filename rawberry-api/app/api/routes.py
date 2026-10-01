@@ -16,8 +16,13 @@ from app.models import (
     IngestResponse,
     ItemRecord,
     RootResponse,
+<<<<<<< HEAD
     UploadErrorResponse,
     UploadResponse,
+=======
+    SystemPromptRequest,
+    SystemPromptResponse,
+>>>>>>> feature/user-system-prompts
 )
 from app.services.chat_service import ChatService
 from app.services.ingest_service import IngestService
@@ -76,6 +81,7 @@ def chat(request: ChatRequest, service: ChatService = Depends(get_chat_service))
     return service.generate_reply(request)
 
 
+<<<<<<< HEAD
 @router.post(
     "/chat/stream",
     response_class=StreamingResponse,
@@ -129,6 +135,22 @@ def chat_stream(request: ChatRequest, service: ChatService = Depends(get_chat_se
 
 def _format_status_event(event: ChatStatusEvent) -> str:
     return f"event: status\ndata: {event.model_dump_json()}\n\n"
+=======
+@router.get("/users/{userid}/system-prompt", response_model=SystemPromptResponse)
+def get_system_prompt(userid: int, store: InMemoryStore = Depends(get_store)) -> SystemPromptResponse:
+    return SystemPromptResponse(userid=userid, prompt=store.get_system_prompt(userid))
+
+
+@router.put("/users/{userid}/system-prompt", response_model=SystemPromptResponse)
+def set_system_prompt(
+    userid: int,
+    request: SystemPromptRequest,
+    store: InMemoryStore = Depends(get_store),
+) -> SystemPromptResponse:
+    prompt = request.prompt.strip()
+    store.set_system_prompt(userid, prompt)
+    return SystemPromptResponse(userid=userid, prompt=prompt)
+>>>>>>> feature/user-system-prompts
 
 
 @router.post("/ingest", response_model=IngestResponse, status_code=status.HTTP_201_CREATED)

@@ -10,6 +10,7 @@ class InMemoryStore:
         self._documents: list[dict[str, Any]] = []
         self._document_contents: dict[str, bytes] = {}
         self._chunks: list[dict[str, Any]] = []
+        self._system_prompts: dict[int, str] = {}
 
     def add(self, item: dict[str, Any]) -> None:
         # Add one item to the collection.
@@ -67,3 +68,12 @@ class InMemoryStore:
 
         scored_chunks.sort(key=lambda item: item[0], reverse=True)
         return [chunk for _, chunk in scored_chunks[:limit]]
+
+    def get_system_prompt(self, userid: int) -> str:
+        return self._system_prompts.get(userid, "")
+
+    def set_system_prompt(self, userid: int, prompt: str) -> None:
+        if prompt:
+            self._system_prompts[userid] = prompt
+        else:
+            self._system_prompts.pop(userid, None)
