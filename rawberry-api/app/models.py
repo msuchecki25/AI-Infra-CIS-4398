@@ -53,13 +53,13 @@ class ChatResponse(BaseModel):
     recent_items: list[ItemRecord]
 
 
-<<<<<<< HEAD
 class ChatStatusEvent(BaseModel):
     request_id: str
     status: Literal["received", "generating", "completed", "failed"]
     message: str
     response: ChatResponse | None = None
-=======
+
+
 class SystemPromptRequest(BaseModel):
     prompt: str = Field(default="", max_length=2000)
 
@@ -67,7 +67,6 @@ class SystemPromptRequest(BaseModel):
 class SystemPromptResponse(BaseModel):
     userid: int
     prompt: str
->>>>>>> feature/user-system-prompts
 
 
 class IngestRequest(BaseModel):
