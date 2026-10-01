@@ -1,0 +1,25 @@
+# Keep the container image small and avoid leaking local-only files.
+
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# Local environment/config files should never be baked into the image.
+.env
+.env.*
+!.env.example
+
+# Version control and editor metadata.
+.git/
+.gitignore
+.vscode/
+.idea/
+
+# Tests and docs aren't needed inside the runtime image.
+tests/
+README.md
+run.md
