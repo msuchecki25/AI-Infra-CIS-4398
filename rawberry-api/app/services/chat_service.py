@@ -32,13 +32,32 @@ class ChatService:
         # This will be done through a vector database and RAG retrieval in the future.
         return [ItemRecord(**item) for item in self.store.recent_items(3)]
 
-    def generate_reply_from_message(self, message: str) -> str:
-        # Send the message to the selected chat client.
+    def get_relevant_chunks(self, message: str, limit: int = 3) -> list[str]:
+        chunks = self.store.search_chunks(message, limit=limit)
+        return [str(chunk.get("text", "")).strip() for chunk in chunks if str(chunk.get("text", "")).strip()]
+
+    def generate_reply_from_message(self, message: str, context_chunks: list[str] | None = None, system_prompt: str = "") -> str:
+        if context_chunks:
+            retrieved_context = " ".join(context_chunks)
+            message = f"Use the following document context to answer the question: {retrieved_context}. Question: {message}"
+        if system_prompt:
+            message = (
+                "User response preferences (follow when relevant):\n"
+                f"{system_prompt}\n\n"
+                f"User message:\n{message}"
+            )
         return self.llm_client.generate_reply(message)
 
     def generate_reply(self, request: ChatRequest) -> ChatResponse:
+        context_chunks = self.get_relevant_chunks(request.message)
+        reply = self.generate_reply_from_message(
+            request.message,
+            context_chunks=context_chunks,
+            system_prompt=self.store.get_system_prompt(request.userid),
+        )
+
         # Return the reply along with recent stored items.
         return ChatResponse(
-            reply=self.generate_reply_from_message(request.message),
+            reply=reply,
             recent_items=self.get_recent_items(),
         )

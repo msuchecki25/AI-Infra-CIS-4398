@@ -60,6 +60,15 @@ class ChatStatusEvent(BaseModel):
     response: ChatResponse | None = None
 
 
+class SystemPromptRequest(BaseModel):
+    prompt: str = Field(default="", max_length=2000)
+
+
+class SystemPromptResponse(BaseModel):
+    userid: int
+    prompt: str
+
+
 class IngestRequest(BaseModel):
     userid: int
     text: str = Field(..., min_length=1)
@@ -70,6 +79,43 @@ class IngestResponse(BaseModel):
     message: str
     item: ItemRecord
     count: int
+
+
+class DocumentChunk(BaseModel):
+    document_id: str
+    owner_id: str | None = None
+    chunk_index: int
+    page_number: int | None = None
+    text: str
+    status: str = "pending"
+
+
+class DocumentRecord(BaseModel):
+    id: str
+    filename: str
+    file_type: str
+    size_bytes: int
+    owner_id: str | None = None
+    chunk_count: int = 0
+    embedding_status: str = "pending"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class UploadResponse(BaseModel):
+    success: bool
+    document_id: str
+    filename: str
+    status: str
+    chunk_count: int
+    message: str
+    embedding_status: str = "pending"
+
+
+class UploadErrorResponse(BaseModel):
+    success: bool = False
+    error_code: str
+    message: str
+
 
 #for signing in (not robust but meets features)
 class AuthenticationRequest(BaseModel):

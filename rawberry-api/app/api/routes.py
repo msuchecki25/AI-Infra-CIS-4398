@@ -1,7 +1,9 @@
 import asyncio
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Request, status
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 
 from app.models import (
@@ -14,6 +16,10 @@ from app.models import (
     IngestResponse,
     ItemRecord,
     RootResponse,
+    SystemPromptRequest,
+    SystemPromptResponse,
+    UploadErrorResponse,
+    UploadResponse,
 )
 from app.services.chat_service import ChatService
 from app.services.ingest_service import IngestService
@@ -47,6 +53,7 @@ def read_root() -> RootResponse:
             "/get",
             "/chat",
             "/chat/stream",
+            "/users/{userid}/system-prompt",
             "/ingest",
         ],
     )
@@ -127,7 +134,39 @@ def _format_status_event(event: ChatStatusEvent) -> str:
     return f"event: status\ndata: {event.model_dump_json()}\n\n"
 
 
+@router.get("/users/{userid}/system-prompt", response_model=SystemPromptResponse)
+def get_system_prompt(userid: int, store: InMemoryStore = Depends(get_store)) -> SystemPromptResponse:
+    return SystemPromptResponse(userid=userid, prompt=store.get_system_prompt(userid))
+
+
+@router.put("/users/{userid}/system-prompt", response_model=SystemPromptResponse)
+def set_system_prompt(
+    userid: int,
+    request: SystemPromptRequest,
+    store: InMemoryStore = Depends(get_store),
+) -> SystemPromptResponse:
+    prompt = request.prompt.strip()
+    store.set_system_prompt(userid, prompt)
+    return SystemPromptResponse(userid=userid, prompt=prompt)
+
+
 @router.post("/ingest", response_model=IngestResponse, status_code=status.HTTP_201_CREATED)
 # Store the submitted text and return the new item.
 def ingest(request: IngestRequest, service: IngestService = Depends(get_ingest_service)) -> IngestResponse:
     return service.ingest(request)
+
+
+@router.post(
+    "/upload",
+    response_model=list[UploadResponse],
+    responses={
+        400: {"model": UploadErrorResponse},
+        413: {"model": UploadErrorResponse},
+    },
+)
+def upload_document(
+    files: Annotated[list[UploadFile], File(...)],
+    owner_id: Annotated[str | None, Form()] = None,
+    service: IngestService = Depends(get_ingest_service),
+) -> list[UploadResponse]:
+    return service.upload_document(files, owner_id=owner_id)
