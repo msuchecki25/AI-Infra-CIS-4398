@@ -1,0 +1,129 @@
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
+
+#this overall class is used to define the data models for the API, 
+# including request and response models for various endpoints.
+#this helps with data validation, serialization, and documentation of 
+# the API's expected inputs and outputs.
+
+class HealthResponse(BaseModel):
+    status: str = "healthy"
+
+# Represents one piece of text ingested by the API.
+# In the future, this may represent a document chunk stored in a vector database.
+class ItemRecord(BaseModel):
+    id: str
+    text: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RootResponse(BaseModel):
+    message: str
+    available_endpoints: list[str]
+
+
+class GetItemsResponse(BaseModel):
+    items: list[ItemRecord]
+    count: int
+
+#information about the user's session, gives context
+class InstanceData(BaseModel):
+    window: int
+    agent: str
+
+#push a new query to the AI
+class QueryRequest(BaseModel):
+    userid: int
+    data: InstanceData
+    message: str = Field(..., min_length=1)
+
+#whether or not the user's query was received and being processed 0/1/2 received/not received
+class QueryResponse(BaseModel):
+    status: int
+
+#sees if the chat response has been completed
+class ChatRequest(BaseModel):
+    userid: int
+    data: InstanceData
+    message: str = Field(..., min_length=1)
+
+class ChatResponse(BaseModel):
+    reply: str
+    recent_items: list[ItemRecord]
+
+
+class ChatStatusEvent(BaseModel):
+    request_id: str
+    status: Literal["received", "generating", "completed", "failed"]
+    message: str
+    response: ChatResponse | None = None
+
+
+class SystemPromptRequest(BaseModel):
+    prompt: str = Field(default="", max_length=2000)
+
+
+class SystemPromptResponse(BaseModel):
+    userid: int
+    prompt: str
+
+
+class IngestRequest(BaseModel):
+    userid: int
+    text: str = Field(..., min_length=1)
+    metadata: dict[str, Any] | None = None
+
+
+class IngestResponse(BaseModel):
+    message: str
+    item: ItemRecord
+    count: int
+
+
+class DocumentChunk(BaseModel):
+    document_id: str
+    owner_id: str | None = None
+    chunk_index: int
+    page_number: int | None = None
+    text: str
+    status: str = "pending"
+
+
+class DocumentRecord(BaseModel):
+    id: str
+    filename: str
+    file_type: str
+    size_bytes: int
+    owner_id: str | None = None
+    chunk_count: int = 0
+    embedding_status: str = "pending"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class UploadResponse(BaseModel):
+    success: bool
+    document_id: str
+    filename: str
+    status: str
+    chunk_count: int
+    message: str
+    embedding_status: str = "pending"
+
+
+class UploadErrorResponse(BaseModel):
+    success: bool = False
+    error_code: str
+    message: str
+
+
+#for signing in (not robust but meets features)
+class AuthenticationRequest(BaseModel):
+    username: str
+    password: str
+
+#conf 0/1 success/fail ... auth 0/1/2 user/admin/other ... userid identifier
+class AuthenticationRespone(BaseModel):
+    conf: int
+    auth: int
+    userid: int
