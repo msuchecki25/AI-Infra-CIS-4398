@@ -4,11 +4,11 @@ This folder contains the FastAPI backend for the RAWBerry project.
 
 ## Purpose
 
-The `rawberry-api` folder is the API layer for the application. Its current job is to provide a simple, testable backend contract for the frontend while the database/RAG pipeline is still being developed elsewhere.
+The `rawberry-api` folder is the API layer for the application. It provides a testable backend contract and a local in-memory retrieval implementation while the persistent database/RAG pipeline is being developed.
 
 ## Current implementation
 
-This backend is currently a starter API with in-memory storage.
+This backend uses in-memory storage. Text ingestion and `.txt` uploads are chunked, embedded with a deterministic local feature-hash provider, and searched by cosine similarity. Chat passes the top matching chunks to the configured LLM client. This local provider supports development and interface testing; it is not a hosted semantic embedding model.
 
 ### Available endpoints
 
@@ -25,17 +25,13 @@ This backend is currently a starter API with in-memory storage.
 - Request/response modeling
 - API route definitions
 - Basic validation
-- In-memory data handling for local development
+- In-memory data handling and vector retrieval for local development
 
 ## Out of scope for this folder
 
-This folder is not yet responsible for:
+This folder does not yet provide:
 
-- document chunking
-- embedding generation
-- vector search
 - PostgreSQL or pgvector setup
-- Gemini/LLM integration
 - persistent storage
 - authentication and authorization
 

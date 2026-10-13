@@ -56,6 +56,8 @@ def test_ingest_and_get_round_trip():
     get_response = client.get("/get")
     assert get_response.status_code == 200
     assert get_response.json()["count"] == 1
+    assert len(app.state.store.list_chunks()) == 1
+    assert app.state.store.list_chunks()[0]["status"] == "indexed"
 
 
 def test_chat_uses_typed_reply(monkeypatch):
@@ -359,3 +361,28 @@ def test_chat_uses_retrieved_document_chunks_as_context():
     payload = response.json()
     assert "gamma" in payload["reply"].lower()
     assert "alpha beta gamma delta" in payload["reply"].lower()
+
+
+def test_chat_combines_retrieved_context_and_saved_response_preferences():
+    app = create_app()
+    client = TestClient(app)
+    client.put("/users/7/system-prompt", json={"prompt": "Answer in one sentence."})
+    client.post(
+        "/ingest",
+        json={"userid": 7, "text": "The moon orbits Earth every 27 days."},
+    )
+
+    response = client.post(
+        "/chat",
+        json={
+            "userid": 7,
+            "data": {"window": 3, "agent": "test"},
+            "message": "How long does the moon orbit Earth?",
+        },
+    )
+
+    assert response.status_code == 200
+    reply = response.json()["reply"]
+    assert "Answer in one sentence." in reply
+    assert "The moon orbits Earth every 27 days." in reply
+    assert "How long does the moon orbit Earth?" in reply
