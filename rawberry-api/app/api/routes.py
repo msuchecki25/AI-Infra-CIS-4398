@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 
 from app.models import (
     ChatRequest,
+    DocumentRecord,
     ChatResponse,
     ChatStatusEvent,
     GetItemsResponse,
@@ -23,23 +24,23 @@ from app.models import (
 )
 from app.services.chat_service import ChatService
 from app.services.ingest_service import IngestService
-from app.store import InMemoryStore
+from app.repository import Repository
 
 router = APIRouter()
 
 
-# Get the shared in-memory store from the FastAPI application.
-def get_store(request: Request) -> InMemoryStore:
+# Get the configured repository from the FastAPI application.
+def get_store(request: Request) -> Repository:
     return request.app.state.store
 
 
 # Create the chat service using the shared store.
-def get_chat_service(store: InMemoryStore = Depends(get_store)) -> ChatService:
+def get_chat_service(store: Repository = Depends(get_store)) -> ChatService:
     return ChatService(store)
 
 
 # Create the ingestion service using the shared store.
-def get_ingest_service(store: InMemoryStore = Depends(get_store)) -> IngestService:
+def get_ingest_service(store: Repository = Depends(get_store)) -> IngestService:
     return IngestService(store)
 
 
@@ -55,6 +56,8 @@ def read_root() -> RootResponse:
             "/chat/stream",
             "/users/{userid}/system-prompt",
             "/ingest",
+            "/upload",
+            "/documents",
         ],
     )
 
@@ -67,10 +70,15 @@ def health() -> HealthResponse:
 #temporary way to get items from the store, will be replaced with RAG retrieval and 
 # vector database integration in the future
 @router.get("/get", response_model=GetItemsResponse)
-# Return all items currently stored in memory.
-def get_items(store: InMemoryStore = Depends(get_store)) -> GetItemsResponse:
+# Return ingested text items through the configured repository.
+def get_items(store: Repository = Depends(get_store)) -> GetItemsResponse:
     items = [ItemRecord(**item) for item in store.list_items()]
     return GetItemsResponse(items=items, count=len(items))
+
+
+@router.get("/documents", response_model=list[DocumentRecord])
+def get_documents(store: Repository = Depends(get_store)) -> list[DocumentRecord]:
+    return [DocumentRecord(**document) for document in store.list_documents()]
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -135,7 +143,7 @@ def _format_status_event(event: ChatStatusEvent) -> str:
 
 
 @router.get("/users/{userid}/system-prompt", response_model=SystemPromptResponse)
-def get_system_prompt(userid: int, store: InMemoryStore = Depends(get_store)) -> SystemPromptResponse:
+def get_system_prompt(userid: int, store: Repository = Depends(get_store)) -> SystemPromptResponse:
     return SystemPromptResponse(userid=userid, prompt=store.get_system_prompt(userid))
 
 
@@ -143,7 +151,7 @@ def get_system_prompt(userid: int, store: InMemoryStore = Depends(get_store)) ->
 def set_system_prompt(
     userid: int,
     request: SystemPromptRequest,
-    store: InMemoryStore = Depends(get_store),
+    store: Repository = Depends(get_store),
 ) -> SystemPromptResponse:
     prompt = request.prompt.strip()
     store.set_system_prompt(userid, prompt)
@@ -165,7 +173,10 @@ def ingest(request: IngestRequest, service: IngestService = Depends(get_ingest_s
     },
 )
 def upload_document(
-    files: Annotated[list[UploadFile], File(...)],
+    files: Annotated[list[UploadFile], File(
+        ...,
+        json_schema_extra={"items": {"type": "string", "format": "binary"}},
+    )],
     owner_id: Annotated[str | None, Form()] = None,
     service: IngestService = Depends(get_ingest_service),
 ) -> list[UploadResponse]:

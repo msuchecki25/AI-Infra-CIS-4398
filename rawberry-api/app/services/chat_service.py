@@ -1,7 +1,7 @@
 from app.config import Settings, get_settings
 from app.models import ChatRequest, ChatResponse, ItemRecord
 from app.services.gemini_service import GeminiChatClient, MockChatClient
-from app.store import InMemoryStore
+from app.repository import Repository
 
 #API team works on this service 
 # this class is responsible for handling chat requests and generating responses 
@@ -12,7 +12,7 @@ from app.store import InMemoryStore
 class ChatService:
     def __init__(
         self,
-        store: InMemoryStore,
+        store: Repository,
         settings: Settings | None = None,
         llm_client=None,
     ) -> None:

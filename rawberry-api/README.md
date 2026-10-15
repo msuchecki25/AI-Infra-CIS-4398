@@ -1,10 +1,54 @@
 # RAWBerry API
 
+Database integration setup and current persistence behavior are documented in
+[PERSISTENCE.md](PERSISTENCE.md). PostgreSQL is selected using `DATABASE_URL`;
+without it, storage remains in memory. The starter-design notes below describe
+the original prototype and planned architecture.
+
 This folder contains the FastAPI backend for the RAWBerry project.
 
 ## Purpose
 
 The `rawberry-api` folder is the API layer for the application. Its current job is to provide a simple, testable backend contract for the frontend while the database/RAG pipeline is still being developed elsewhere.
+
+## Authentication boundary and user context
+
+This project supplies backend endpoints for document ingestion, chunking, RAG
+retrieval, and AI model calls. The upstream application's backend or gateway owns
+authentication, including login, registration, password handling, and account
+management. Those features are outside this project's scope.
+
+The intended request flow is:
+
+```text
+Client -> Upstream backend/gateway authenticates user
+       -> RAWBerry API receives trusted user context
+       -> Storage and retrieval are scoped to that user
+       -> AI model receives the authorized document context
+```
+
+The upstream service must pass the authenticated user's ID through an agreed
+service-to-service contract. The deployment must ensure callers cannot bypass that
+service and impersonate another user by submitting an arbitrary ID. A user ID
+supplied directly by a browser is not verified identity.
+
+RAWBerry remains responsible for consistently attaching trusted user context to
+stored content and enforcing that scope when listing documents, retrieving chunks,
+returning recent items, and reading or updating preferences. Implementing this user
+scoping does not require building a separate login or account system here.
+
+Current implementation limitations:
+
+- `/ingest` accepts integer `userid`; `/upload` accepts optional string `owner_id`.
+  These identifiers are not yet unified or connected to trusted upstream identity.
+- `/chat` and `/chat/stream` use `userid` to select preferences, but chunk retrieval
+  and recent items are not filtered by user.
+- `/get` and `/documents` return global results; preference endpoints accept the
+  requested user ID without an upstream identity check.
+
+User IDs currently act as metadata or preference keys. Complete user isolation is
+planned backend work, not an implemented guarantee. `/` and `/health` are general
+service endpoints and do not need user-specific document context.
 
 ## Current implementation
 
@@ -37,7 +81,10 @@ This folder is not yet responsible for:
 - PostgreSQL or pgvector setup
 - Gemini/LLM integration
 - persistent storage
-- authentication and authorization
+- upstream authentication, login, registration, and account management
+
+User-scoped storage and retrieval remain backend responsibilities, as described
+above; they are separate from upstream authentication.
 
 ## Folder contents
 
@@ -335,9 +382,12 @@ Retrieving Documents
 Generating Response
 ```
 
-### Authentication / Authorization
+### Upstream Identity and Backend User Scoping
 
-Users should have accounts and only be able to access their private conversations unless a conversation has explicitly been shared.
+The upstream application manages accounts and authenticates users. RAWBerry must
+use the trusted user context it receives to scope documents, retrieval, preferences,
+and future conversation access. Explicit sharing rules may grant access beyond the
+owner; login and registration endpoints are not part of this backend.
 
 ### Shareable Links
 
@@ -508,8 +558,8 @@ After the core RAG pipeline works, implement:
 
 * Conversation history
 * Context windows
-* Authentication
-* Authorization
+* Integration with trusted upstream user context
+* User-scoped storage, retrieval, and access enforcement
 * System prompts
 * Specialized chats
 * Faithfulness score
@@ -550,11 +600,12 @@ User A
   +----> User B conversations      DENIED
 ```
 
-Passwords must never be stored as plaintext.
+Authentication and password management belong to the upstream application. This
+backend must not add its own password storage or login system.
 
-Authorization must be checked server-side.
-
-The frontend must NEVER be trusted to enforce access control by itself.
+RAWBerry must enforce user scoping server-side using identity supplied through the
+trusted upstream integration. The browser alone must not decide which user's
+content a request may access. These checks are not fully implemented yet.
 
 Shareable links are an explicit exception to private conversation access, but shared conversations should remain read-only for users other than the original owner unless requirements change.
 
@@ -671,7 +722,7 @@ When generating code for this repository, follow these project boundaries.
 * Implement a second vector database inside the API layer.
 * Put database credentials directly in source code.
 * Put Gemini/API keys directly in source code.
-* Store passwords in plaintext.
+* Implement login, registration, or password storage in this backend.
 * Trust user IDs supplied by the frontend for authorization.
 * Couple frontend code directly to PostgreSQL.
 * Put the entire project permanently inside `main.py`.
