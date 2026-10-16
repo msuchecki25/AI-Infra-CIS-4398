@@ -123,7 +123,7 @@ class AuthenticationRequest(BaseModel):
     password: str
 
 #conf 0/1 success/fail ... auth 0/1/2 user/admin/other ... userid identifier
-class AuthenticationRespone(BaseModel):
+class AuthenticationResponse(BaseModel):
     conf: int
     auth: int
     userid: int

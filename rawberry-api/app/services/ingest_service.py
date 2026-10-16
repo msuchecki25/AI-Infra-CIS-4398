@@ -5,24 +5,21 @@ from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile, status
 
-from app.models import DocumentChunk, DocumentRecord, IngestRequest, IngestResponse, ItemRecord, UploadResponse
-from app.store import InMemoryStore
+from app.models import IngestResponse, ItemRecord, UploadResponse
+from app.user_models import DocumentChunk, DocumentRecord, IngestRequest
+from app.repository import Repository
 
-#DB team will eventually replace this service with a more robust ingestion service 
-# that handles chunking, vectorization, and RAG retrieval. For now, this service 
-# simply saves the ingested text to an in-memory store.
+# Extraction and embedding generation remain the database/RAG team's next stage.
 class IngestService:
     MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024
     ALLOWED_EXTENSIONS = {".pdf": "application/pdf", ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".txt": "text/plain"}
 
-    def __init__(self, store: InMemoryStore) -> None:
+    def __init__(self, store: Repository) -> None:
         # Store the location where ingested items will be saved.
         self.store = store
 
-    #this is a temporary ingestion method that saves items to the in-memory store.
-    #creates one record for each ingestion request, no chunking yet, no vector database yet, 
-    # no RAG retrieval yet.
-    def ingest(self, request: IngestRequest) -> IngestResponse:
+    # Plain text ingestion remains separate from the uploaded-document chunk pipeline.
+    def ingest(self, user_id: str, request: IngestRequest) -> IngestResponse:
         # Create, save, and return an item from the submitted text.
         item = ItemRecord(
             id=str(uuid4()),
@@ -30,12 +27,12 @@ class IngestService:
             metadata=request.metadata or {},
         )
 
-        self.store.add(item.model_dump())
+        self.store.add(user_id, item.model_dump())
 
         return IngestResponse(
             message="Item ingested successfully",
             item=item,
-            count=len(self.store.list_items()),
+            count=len(self.store.list_items(user_id)),
         )
 
     def _validate_file_content(self, filename: str, raw_bytes: bytes) -> str | None:
@@ -65,7 +62,7 @@ class IngestService:
             },
         )
 
-    def _chunk_text(self, document_id: str, owner_id: str | None, text: str) -> list[DocumentChunk]:
+    def _chunk_text(self, document_id: str, text: str) -> list[DocumentChunk]:
         max_chars = 900
         chunks: list[DocumentChunk] = []
         for idx, start in enumerate(range(0, len(text), max_chars)):
@@ -75,16 +72,15 @@ class IngestService:
             chunks.append(
                 DocumentChunk(
                     document_id=document_id,
-                    owner_id=owner_id,
                     chunk_index=idx,
-                    page_number=(idx + 1),
+                    page_number=None,
                     text=chunk_text,
                     status="pending",
                 )
             )
         return chunks
 
-    def upload_document(self, files: list[UploadFile], owner_id: str | None = None) -> list[UploadResponse]:
+    def upload_document(self, user_id: str, files: list[UploadFile]) -> list[UploadResponse]:
         if not files:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -122,25 +118,24 @@ class IngestService:
             validated_files.append((uploaded_file, filename, ext, len(raw_bytes)))
 
         responses: list[UploadResponse] = []
+        documents: list[tuple[dict, bytes, list[dict]]] = []
         for uploaded_file, filename, ext, size_bytes in validated_files:
             raw_bytes = uploaded_file.file.read(self.MAX_FILE_SIZE_BYTES + 1)
             text = self._validate_file_content(filename, raw_bytes)
             document_id = str(uuid4())
-            chunks = self._chunk_text(document_id, owner_id, text) if text is not None else []
+            chunks = self._chunk_text(document_id, text) if text is not None else []
             document = DocumentRecord(
                 id=document_id,
                 filename=filename,
                 file_type=ext,
                 size_bytes=size_bytes,
-                owner_id=owner_id,
+                user_id=user_id,
                 chunk_count=len(chunks),
                 embedding_status="pending",
                 metadata={"source": "upload_endpoint"},
             )
 
-            self.store.add_document(document.model_dump(), content=raw_bytes)
-            for chunk in chunks:
-                self.store.add_chunk(chunk.model_dump())
+            documents.append((document.model_dump(), raw_bytes, [chunk.model_dump() for chunk in chunks]))
 
             responses.append(
                 UploadResponse(
@@ -154,4 +149,5 @@ class IngestService:
                 )
             )
 
+        self.store.save_documents(user_id, documents)
         return responses

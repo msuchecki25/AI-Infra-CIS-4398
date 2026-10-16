@@ -1,63 +1,63 @@
-from app.config import Settings, get_settings
-from app.models import ChatRequest, ChatResponse, ItemRecord
-from app.services.gemini_service import GeminiChatClient, MockChatClient
-from app.store import InMemoryStore
+import json
+import logging
 
-#API team works on this service 
-# this class is responsible for handling chat requests and generating responses 
-# using either the Gemini client or a mock client.
-#this class is currently missing the RAG retrieval and vector database integration 
-# (to send the recent items to the LLM for context), 
-# which will be added in the future.
+from app.config import Settings, get_settings
+from app.repository import Repository, StorageError, ConversationBusy
+from app.services.gemini_service import GeminiChatClient, MockChatClient
+from app.user_models import ChatRequest, ChatResponse
+
+logger = logging.getLogger(__name__)
+
+
+class GenerationError(Exception):
+    pass
+
+
 class ChatService:
-    def __init__(
-        self,
-        store: InMemoryStore,
-        settings: Settings | None = None,
-        llm_client=None,
-    ) -> None:
-        # Prepare storage, settings, and the selected chat client.
+    def __init__(self, store: Repository, settings: Settings | None = None, llm_client=None) -> None:
         self.store = store
         self.settings = settings or get_settings()
         self.llm_client = llm_client or self._build_llm_client()
 
     def _build_llm_client(self):
-        # Use Gemini when configured; otherwise use the local mock client.
-        if GeminiChatClient(self.settings).should_use_real_client():
-            return GeminiChatClient(self.settings)
-        return MockChatClient()
+        client = GeminiChatClient(self.settings)
+        return client if client.should_use_real_client() else MockChatClient()
 
-    def get_recent_items(self) -> list[ItemRecord]:
-        # Return the three most recently ingested items.
-        # This will be done through a vector database and RAG retrieval in the future.
-        return [ItemRecord(**item) for item in self.store.recent_items(3)]
+    def prepare_turn(self, user_id: str, request: ChatRequest) -> dict:
+        return self.store.start_turn(user_id, str(request.conversation_id), request.message)
 
-    def get_relevant_chunks(self, message: str, limit: int = 3) -> list[str]:
-        chunks = self.store.search_chunks(message, limit=limit)
-        return [str(chunk.get("text", "")).strip() for chunk in chunks if str(chunk.get("text", "")).strip()]
-
-    def generate_reply_from_message(self, message: str, context_chunks: list[str] | None = None, system_prompt: str = "") -> str:
-        if context_chunks:
-            retrieved_context = " ".join(context_chunks)
-            message = f"Use the following document context to answer the question: {retrieved_context}. Question: {message}"
-        if system_prompt:
-            message = (
-                "User response preferences (follow when relevant):\n"
-                f"{system_prompt}\n\n"
-                f"User message:\n{message}"
-            )
-        return self.llm_client.generate_reply(message)
-
-    def generate_reply(self, request: ChatRequest) -> ChatResponse:
-        context_chunks = self.get_relevant_chunks(request.message)
-        reply = self.generate_reply_from_message(
-            request.message,
-            context_chunks=context_chunks,
-            system_prompt=self.store.get_system_prompt(request.userid),
-        )
-
-        # Return the reply along with recent stored items.
-        return ChatResponse(
-            reply=reply,
-            recent_items=self.get_recent_items(),
-        )
+    def generate_reply(self, user_id: str, request: ChatRequest, turn: dict | None = None) -> ChatResponse:
+        conversation_id = str(request.conversation_id)
+        turn = turn if turn is not None else self.prepare_turn(user_id, request)
+        try:
+            chunks = self.store.search_chunks(user_id, request.message, limit=3)
+            preferences = self.store.get_system_prompt(user_id)
+            message = request.message
+            if chunks:
+                context = ' '.join(chunk['text'] for chunk in chunks)
+                message = f'Use the following document context to answer the question: {context}. Question: {message}'
+            # Only completed turns from this conversation, bounded by count and size.
+            history = []
+            remaining = 12000
+            for previous in reversed(turn['history']):
+                entry = json.dumps({'user': previous['prompt'], 'assistant': previous['reply']})
+                if len(entry) > remaining:
+                    break
+                history.append(entry)
+                remaining -= len(entry)
+            if history:
+                message = 'Conversation history (prior messages):\n' + '\n'.join(reversed(history)) + '\nCurrent message:\n' + message
+            if preferences:
+                message = f'User response preferences (follow when relevant):\n{preferences}\n\nUser message:\n{message}'
+            recent = self.store.recent_items(user_id, 3)
+            reply = self.llm_client.generate_reply(message)
+        except Exception as exc:
+            try:
+                self.store.finish_turn(user_id, conversation_id, turn['id'], None)
+            except (StorageError, ConversationBusy):
+                logger.warning('Could not record failed generation; pending turn will expire.')
+            if isinstance(exc, StorageError):
+                raise
+            raise GenerationError() from exc
+        self.store.finish_turn(user_id, conversation_id, turn['id'], reply)
+        return ChatResponse(conversation_id=conversation_id, turn_id=turn['id'], reply=reply, recent_items=recent)
