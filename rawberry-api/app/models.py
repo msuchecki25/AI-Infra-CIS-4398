@@ -10,22 +10,11 @@ from pydantic import BaseModel, Field
 class HealthResponse(BaseModel):
     status: str = "healthy"
 
-# Represents one piece of text ingested by the API.
-# In the future, this may represent a document chunk stored in a vector database.
-class ItemRecord(BaseModel):
-    id: str
-    text: str
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
 
 class RootResponse(BaseModel):
     message: str
     available_endpoints: list[str]
 
-
-class GetItemsResponse(BaseModel):
-    items: list[ItemRecord]
-    count: int
 
 #information about the user's session, gives context
 class InstanceData(BaseModel):
@@ -50,7 +39,6 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: str
-    recent_items: list[ItemRecord]
 
 
 class ChatStatusEvent(BaseModel):
@@ -67,18 +55,6 @@ class SystemPromptRequest(BaseModel):
 class SystemPromptResponse(BaseModel):
     userid: int
     prompt: str
-
-
-class IngestRequest(BaseModel):
-    userid: int
-    text: str = Field(..., min_length=1)
-    metadata: dict[str, Any] | None = None
-
-
-class IngestResponse(BaseModel):
-    message: str
-    item: ItemRecord
-    count: int
 
 
 class DocumentChunk(BaseModel):
@@ -123,7 +99,7 @@ class AuthenticationRequest(BaseModel):
     password: str
 
 #conf 0/1 success/fail ... auth 0/1/2 user/admin/other ... userid identifier
-class AuthenticationRespone(BaseModel):
+class AuthenticationResponse(BaseModel):
     conf: int
     auth: int
     userid: int
