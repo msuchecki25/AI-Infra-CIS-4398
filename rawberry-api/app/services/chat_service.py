@@ -30,9 +30,12 @@ class ChatService:
         conversation_id = str(request.conversation_id)
         turn = turn if turn is not None else self.prepare_turn(user_id, request)
         try:
+            # Storage selects local hash search or persisted pgvector search, always within this user.
             chunks = self.store.search_chunks(user_id, request.message, limit=3)
             preferences = self.store.get_system_prompt(user_id)
             message = request.message
+            # Only retrieved source passages enter document context; history is added separately below.
+            # With no matches, preserve the existing conversation behavior without claiming source evidence.
             if chunks:
                 context = ' '.join(chunk['text'] for chunk in chunks)
                 message = f'Use the following document context to answer the question: {context}. Question: {message}'
