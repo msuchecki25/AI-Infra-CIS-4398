@@ -209,3 +209,25 @@ The GitHub Actions test workflow exercises both suites with a disposable pgvecto
 service and mocked model calls. Local PostgreSQL tests remain opt-in through
 `TEST_DATABASE_URL`. Configure the workflow as a required branch-protection check
 if the team wants failed tests to block merges.
+
+## Retrieval invocation checks (T1AI-49)
+
+With a disposable pgvector database in `TEST_DATABASE_URL`, run both suites from
+the repository root. The PostgreSQL integration tests upload TXT sources, recreate
+the application, and invoke both `/chat` and `/chat/stream`. The SDK is replaced
+with controlled responses, so the tests prove request wiring and database behavior
+without incurring Google charges or judging model answer quality.
+
+The invocation tests check that only the question is embedded after restart,
+selected source passages reach `gemini-2.5-flash`, other users' passages and unrelated
+passages are excluded, and embedding failures leave a failed conversation turn
+without calling the answer model. No-match behavior preserves the existing API:
+the model receives the question and any allowed conversation history/preferences,
+without retrieved document context. It is not forced to abstain or return citations.
+
+For a live team demo after database/Vertex configuration, upload a UTF-8 `.txt`
+file through Swagger with the trusted development user header, confirm its
+`embedding_status` is `completed`, create a conversation, then ask a question about
+that file using the returned conversation ID. Use `USE_MOCK_CHAT=false` for a real
+Gemini answer. PDF/DOCX extraction, historical backfill, and real-model retrieval
+quality evaluation are outside these tests.

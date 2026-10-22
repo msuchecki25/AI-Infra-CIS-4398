@@ -219,3 +219,136 @@ def test_postgres_serializes_conversation_turns_and_recovers_abandoned_work(data
         repository.finish_turn('alice', identifier, first['id'], 'late')
     other_instance.finish_turn('alice', identifier, second['id'], 'success')
     assert [m['status'] for m in repository.list_messages('alice', identifier)] == ['failed', 'completed', 'completed']
+
+
+@pytest.mark.parametrize('endpoint', ['/chat', '/chat/stream'])
+def test_persistent_retrieval_reaches_gemini_with_only_owned_context(database_url, monkeypatch, endpoint):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from app.api.routes import get_chat_service
+    from app.config import Settings
+    from app.retrieval.embeddings import VertexEmbeddingProvider
+    from app.services.chat_service import ChatService
+
+    settings = Settings(google_cloud_project='test-project', use_mock_chat=False)
+    sdk_client = MagicMock()
+    sdk_client.__enter__.return_value = sdk_client
+    monkeypatch.setattr('google.genai.Client', MagicMock(return_value=sdk_client))
+    selected = 'The Continental Army prevailed at Yorktown.'
+    irrelevant = 'An apple pie needs flour and butter.'
+    private = 'BOB PRIVATE PAYROLL'
+    question = 'Who won the revolutionary battle?'
+
+    def embed(*, model, contents, config):
+        # Controlled semantic matches: the question and passage share a vector,
+        # while the unrelated passage is orthogonal. No Google calls are made.
+        values = ([0.0, 1.0] if contents == irrelevant else [1.0, 0.0]) + [0.0] * 766
+        return SimpleNamespace(embeddings=[SimpleNamespace(values=values)])
+
+    sdk_client.models.embed_content.side_effect = embed
+    sdk_client.models.generate_content.return_value = SimpleNamespace(text='The Continental Army won.')
+    store = PostgresRepository(database_url, embeddings=VertexEmbeddingProvider(settings))
+    with TestClient(create_app(store=store), headers={'X-User-ID': 'alice'}) as client:
+        for owner, text in [('alice', selected), ('alice', irrelevant), ('bob', private)]:
+            uploaded = client.post('/upload', headers={'X-User-ID': owner}, files=[
+                ('files', ('notes.txt', text.encode(), 'text/plain')),
+            ])
+            assert uploaded.status_code == 200
+            assert uploaded.json()[0]['embedding_status'] == 'completed'
+
+    # Recreate application/storage to prove generation uses durable vectors.
+    sdk_client.models.embed_content.reset_mock()
+    restarted = PostgresRepository(database_url, embeddings=VertexEmbeddingProvider(settings))
+    app = create_app(store=restarted)
+    app.dependency_overrides[get_chat_service] = lambda: ChatService(restarted, settings=settings)
+    with TestClient(app, headers={'X-User-ID': 'alice'}) as client:
+        identifier = client.post('/conversations', json={'title': 'History'}).json()['id']
+        response = client.post(endpoint, json={'conversation_id': identifier, 'message': question})
+        assert response.status_code == 200
+        if endpoint == '/chat':
+            assert response.json()['reply'] == 'The Continental Army won.'
+        else:
+            assert '"status":"completed"' in response.text
+            assert 'The Continental Army won.' in response.text
+        history = client.get(f'/conversations/{identifier}/messages').json()
+        assert [entry['status'] for entry in history] == ['completed', 'completed']
+
+    sdk_client.models.embed_content.assert_called_once()
+    assert sdk_client.models.embed_content.call_args.kwargs['config']['task_type'] == 'RETRIEVAL_QUERY'
+    generation = sdk_client.models.generate_content.call_args.kwargs
+    assert generation['model'] == 'gemini-2.5-flash'
+    assert selected in generation['contents']
+    assert question in generation['contents']
+    assert irrelevant not in generation['contents']
+    assert private not in generation['contents']
+    sdk_client.models.generate_content.assert_called_once()
+
+
+def test_no_match_does_not_inject_another_users_sources(database_url):
+    from unittest.mock import MagicMock
+
+    from app.api.routes import get_chat_service
+    from app.services.chat_service import ChatService
+
+    store = PostgresRepository(database_url)
+    document = {'id': str(uuid4()), 'filename': 'private.txt', 'file_type': '.txt', 'size_bytes': 32}
+    store.save_documents('bob', [(document, b'BOB CONFIDENTIAL PAYROLL NUMBERS', [
+        {'chunk_index': 0, 'text': 'BOB CONFIDENTIAL PAYROLL NUMBERS'},
+    ])])
+    llm = MagicMock()
+    llm.generate_reply.return_value = 'A response without source context.'
+    app = create_app(store=store)
+    app.dependency_overrides[get_chat_service] = lambda: ChatService(store, llm_client=llm)
+    with TestClient(app, headers={'X-User-ID': 'alice'}) as client:
+        identifier = client.post('/conversations', json={}).json()['id']
+        response = client.post('/chat', json={'conversation_id': identifier, 'message': 'PAYROLL'})
+        assert response.status_code == 200
+        assert response.json()['reply'] == 'A response without source context.'
+    # Preserve the current no-match contract: generation receives the question
+    # without claiming any retrieved evidence; it is not forced to abstain.
+    llm.generate_reply.assert_called_once_with('PAYROLL')
+
+
+@pytest.mark.parametrize('endpoint', ['/chat', '/chat/stream'])
+def test_query_embedding_failure_records_failed_turn_without_generation(database_url, endpoint):
+    from unittest.mock import MagicMock
+
+    from app.api.routes import get_chat_service
+    from app.services.chat_service import ChatService
+
+    embeddings = MagicMock()
+    embeddings.embed_query.side_effect = RuntimeError('sensitive provider details')
+    store = PostgresRepository(database_url, embeddings=embeddings)
+    llm = MagicMock()
+    app = create_app(store=store)
+    app.dependency_overrides[get_chat_service] = lambda: ChatService(store, llm_client=llm)
+    with TestClient(app, headers={'X-User-ID': 'alice'}) as client:
+        identifier = client.post('/conversations', json={}).json()['id']
+        response = client.post(endpoint, json={'conversation_id': identifier, 'message': 'question'})
+        if endpoint == '/chat':
+            assert response.status_code == 503
+            assert response.json()['error_code'] == 'STORAGE_UNAVAILABLE'
+        else:
+            assert response.status_code == 200
+            assert '"status":"failed"' in response.text
+        assert 'sensitive provider details' not in response.text
+        history = client.get(f'/conversations/{identifier}/messages').json()
+        assert len(history) == 1 and history[0]['status'] == 'failed'
+    llm.generate_reply.assert_not_called()
+
+
+def test_embedding_migration_preserves_existing_rows_and_avoids_id_collisions(database_url):
+    import psycopg
+
+    migration = Path(__file__).resolve().parents[2] / 'rawberry-db/migrations/003_vector_embeddings.sql'
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        connection.execute("INSERT INTO embedding(id, chunk_id, vector, model, created_at) "
+                           "VALUES (1000, 200, '[1,0]', 'legacy-model', CURRENT_DATE)")
+        connection.execute(migration.read_text())
+        assert connection.execute('SELECT vector::text, model FROM embedding WHERE id = 1000').fetchone() == ('[1,0]', 'legacy-model')
+    store = PostgresRepository(database_url)
+    document = {'id': str(uuid4()), 'filename': 'new.txt', 'file_type': '.txt', 'size_bytes': 5}
+    store.save_documents('alice', [(document, b'alpha', [{'chunk_index': 0, 'text': 'alpha'}])])
+    with psycopg.connect(database_url) as connection:
+        assert connection.execute('SELECT MAX(id) FROM embedding').fetchone()[0] > 1000
