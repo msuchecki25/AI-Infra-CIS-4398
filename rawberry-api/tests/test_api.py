@@ -12,6 +12,7 @@ from app.main import create_app
 from app.repository import ConversationBusy, ResourceNotFound
 from app.services.chat_service import ChatService
 from app.store import InMemoryStore
+from pdf_samples import make_pdf
 
 
 @pytest.fixture
@@ -207,7 +208,28 @@ def test_upload_retains_bytes_and_txt_chunks(client):
     assert store.get_document_content('alice', document['document_id']) == b'hello gamma'
     assert store.list_chunks('alice')[0]['page_number'] is None
     assert store.list_chunks('bob') == []
-    assert upload(client, b'%PDF-1.7 sample', name='paper.pdf').json()[0]['chunk_count'] == 0
+
+
+def test_pdf_upload_chunks_each_page_with_its_page_number(client):
+    response = upload(client, make_pdf('alpha first page', '', 'gamma third page'), name='paper.pdf')
+    assert response.status_code == 200
+    document = response.json()[0]
+    assert document['chunk_count'] == 2
+    chunks = client.app.state.store.list_chunks('alice')
+    assert [(c['chunk_index'], c['page_number'], c['text']) for c in chunks] == [
+        (0, 1, 'alpha first page'), (1, 3, 'gamma third page')]
+    assert client.app.state.store.search_chunks('alice', 'gamma')[0]['page_number'] == 3
+    # A PDF without a text layer (e.g. a scan) is stored but has nothing to search yet.
+    assert upload(client, make_pdf(''), name='scan.pdf').json()[0]['chunk_count'] == 0
+
+
+def test_long_text_is_split_on_word_boundaries_with_overlap(client):
+    words = ' '.join(f'word{i}' for i in range(600))
+    assert upload(client, words.encode()).status_code == 200
+    chunks = [c['text'] for c in client.app.state.store.list_chunks('alice')]
+    assert len(chunks) > 1 and all(len(text) <= 900 for text in chunks)
+    assert all(text.split()[-1] in words.split() for text in chunks)  # no word cut in half
+    assert chunks[1].split()[0] in chunks[0].split()  # consecutive chunks overlap
 
 
 @pytest.mark.parametrize('name,content,status,code', [
@@ -215,6 +237,7 @@ def test_upload_retains_bytes_and_txt_chunks(client):
     ('a.txt', b'', 400, 'EMPTY_FILE'),
     ('a.txt', b'\xff\xfe', 400, 'INVALID_TEXT_ENCODING'),
     ('a.pdf', b'not pdf', 400, 'INVALID_FILE_CONTENT'),
+    ('a.pdf', b'%PDF-1.7 damaged', 400, 'UNREADABLE_FILE'),
     ('a.docx', b'not zip', 400, 'INVALID_FILE_CONTENT'),
 ])
 def test_invalid_uploads(client, name, content, status, code):
