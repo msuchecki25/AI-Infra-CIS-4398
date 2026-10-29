@@ -1,13 +1,14 @@
 import argparse
 import os
 import re
-from io import BytesIO
 from uuid import uuid4
 
 # app resolves to rawberry-api/app through the repository-level app package
 from app.config import get_settings
+# the /upload endpoint uses the same extraction and chunking
+from app.ingestion import UnreadableDocument, extract_pages, split_pages
 from app.postgres_repository import PostgresRepository
-from app.user_models import DocumentChunk, DocumentRecord
+from app.user_models import DocumentRecord
 
 # same owner rule as the user_id CHECK constraint in migration 002
 USER_ID_PATTERN = re.compile(r"^[!-~]{1,128}$")
@@ -36,7 +37,13 @@ def load_documents(doc_path="testdocs"):
         if not raw_bytes:
             print(f"Skipping empty file {path}")
             continue
-        documents.append((path, raw_bytes, extract_pages(ext, raw_bytes)))
+        try:
+            pages = extract_pages(ext, raw_bytes)
+        except (UnicodeDecodeError, UnreadableDocument):
+            # same files the /upload endpoint rejects, skipped so one bad file doesn't stop the batch
+            print(f"Skipping unreadable file {path}")
+            continue
+        documents.append((path, raw_bytes, pages))
 
     # ensure documents actually contains documents
     if len(documents) == 0:
@@ -49,41 +56,10 @@ def load_documents(doc_path="testdocs"):
     return documents
 
 
-def extract_pages(ext, raw_bytes):
-    # txt files have no pages, so page_number stays None like the upload endpoint
-    if ext == ".txt":
-        # utf-8 only, same rule as DocumentService._validate_file_content
-        return [(None, raw_bytes.decode("utf-8"))]
-    # pdf pages are numbered from 1 so citations match what the reader sees
-    from pypdf import PdfReader
-    reader = PdfReader(BytesIO(raw_bytes))
-    return [(number, page.extract_text() or "") for number, page in enumerate(reader.pages, start=1)]
-
-
-def split_documents(pages, document_id, chunk_size=900, chunk_overlap=100):
+def split_documents(pages, document_id):
     print("Splitting documents into chunks...")
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-    # chunk_size matches the 900 char chunks made by the upload endpoint
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap
-    )
-    # split page by page so every chunk keeps its page number
-    # chunk_index runs across the whole document since (doc_id, chunk_index) is unique
-    chunks = []
-    for page_number, text in pages:
-        for piece in text_splitter.split_text(text):
-            piece = piece.strip()
-            if not piece:
-                continue
-            chunks.append(DocumentChunk(
-                document_id=document_id,
-                chunk_index=len(chunks),
-                page_number=page_number,
-                text=piece,
-                status="pending",
-            ))
-    return chunks
+    # 900 char chunks with 100 char overlap, split page by page so every chunk keeps its page number
+    return split_pages(pages, document_id)
 
 
 def ingest_document(repository, user_id, path, raw_bytes, pages):

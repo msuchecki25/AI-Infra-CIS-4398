@@ -4,8 +4,6 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("langchain_text_splitters")
-
 import ingestion_pipeline
 from app.store import InMemoryStore
 from app.user_models import DocumentRecord

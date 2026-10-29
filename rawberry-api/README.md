@@ -25,14 +25,16 @@ are not supported. `/` and `/health` do not require user context.
 
 - Configurable PostgreSQL persistence; isolated in-memory mode without `DATABASE_URL`.
 - Multi-file uploads: PDF, DOCX, and UTF-8 TXT; 25 MiB per-file limit.
-- TXT chunking with persisted Vertex AI embeddings and owner-filtered pgvector search in PostgreSQL mode.
+- TXT and PDF text extraction and chunking (`app/ingestion.py`, shared with the root
+  `ingestion_pipeline.py`), with persisted Vertex AI embeddings and owner-filtered
+  pgvector search in PostgreSQL mode.
 - Deterministic hash-vector retrieval in the isolated in-memory development mode.
 - Optional Vertex AI Gemini generation, or mock responses for local development.
 - Per-user response preferences.
 - Independent conversations with ordered user/assistant history and generation states.
 - SSE chat lifecycle events; generated tokens are not streamed individually.
 
-PDF/DOCX text extraction, citations, and sharing remain future work. Documents enter the RAG pipeline only through `/upload`; pasted-text
+DOCX text extraction, OCR for scanned PDFs, citations, and sharing remain future work. Documents enter the RAG pipeline only through `/upload`; pasted-text
 submission is not supported. Chat messages remain part of conversation history.
 
 ## Run locally
@@ -95,8 +97,12 @@ with `{"prompt": "Keep answers concise."}`.
 ## Document-only RAG input
 
 Use `POST /upload` to submit one or more document files, and `GET /documents` to
-list your uploaded document metadata. TXT files produce searchable chunks now;
-PDF/DOCX extraction is still pending. Uploaded content is scoped to `X-User-ID`.
+list your uploaded document metadata. TXT and PDF files produce searchable chunks
+of up to 900 characters, split on paragraph/sentence/word boundaries with 100
+characters of overlap. PDF chunks keep their 1-based page number. PDFs without a
+text layer (scans) and DOCX files are stored with no chunks. A PDF that cannot be
+parsed (damaged or password-protected) is rejected with `UNREADABLE_FILE`.
+Uploaded content is scoped to `X-User-ID`.
 
 `POST /ingest` and `GET /get` have been removed and return 404. Chat responses no
 longer include `recent_items`. Existing pasted-text database rows are retained as
@@ -158,7 +164,7 @@ are not used by these routes and do not create authentication endpoints.
 
 ## Retrieval integration and merge checks
 
-API storage methods require a user ID. In PostgreSQL mode, new TXT uploads are
+API storage methods require a user ID. In PostgreSQL mode, new TXT and PDF uploads are
 embedded once with Vertex AI `gemini-embedding-001` at 768 dimensions using the
 `RETRIEVAL_DOCUMENT` task. The question uses `RETRIEVAL_QUERY`. PostgreSQL ranks
 persisted vectors by exact cosine distance and returns up to three positive matches
@@ -187,9 +193,10 @@ re-embedding chunks. Model errors return a safe 503; there is no silent hash fal
 
 Embedding happens before the upload transaction, then original bytes, chunks, and
 vectors are saved together. An embedding or database failure leaves no partial batch.
-TXT upload responses report `embedding_status=completed` only after commit.
-PDF/DOCX uploads remain `pending` with no extracted chunks. Processing is synchronous;
-large TXT batches may be slow and will need a worker in a later sprint.
+Upload responses report `embedding_status=completed` only after commit. DOCX
+uploads and PDFs without extractable text remain `pending` with no chunks.
+Processing is synchronous; large batches may be slow and will need a worker in a
+later sprint.
 
 Without `DATABASE_URL`, the in-memory repository keeps the existing local hash-vector
 path for development. Its data is temporary and its upload status stays pending;
