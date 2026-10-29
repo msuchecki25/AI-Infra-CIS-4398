@@ -62,6 +62,12 @@ def database_url(monkeypatch):
             vector_migration = (root / 'migrations/003_vector_embeddings.sql').read_text()
             connection.execute(vector_migration)
             connection.execute(vector_migration)
+            retention_migration = (root / 'migrations/004_conversation_retention.sql').read_text()
+            connection.execute(retention_migration)
+            connection.execute(retention_migration)
+            description_migration = (root / 'migrations/005_conversation_descriptions.sql').read_text()
+            connection.execute(description_migration)
+            connection.execute(description_migration)
         yield url
     finally:
         with psycopg.connect(base_url, autocommit=True) as admin:

@@ -121,6 +121,51 @@ uploaded source documents.
 
 ## Conversation behavior
 
+Conversation creation/listing responses include a nullable `description` (maximum
+300 characters). New conversations have `description: null`. The first successful
+exchange automatically saves compact question and answer excerpts, with whitespace
+normalized and long text shortened at word boundaries. This is an extractive
+preview, not an additional AI-generated summary, and makes no extra model request.
+It is saved atomically with the completed turn, works for both chat endpoints, and
+is not overwritten by later turns. Failed turns do not create descriptions. Existing
+conversations with null descriptions receive one on their next successful exchange;
+there is no bulk backfill. Titles remain caller-supplied.
+
+Apply migration `005_conversation_descriptions.sql` after 004 before starting this
+API version. PostgreSQL startup requires migration 005. The migration adds a nullable
+column and length constraint without changing existing conversation content.
+
+Conversations expire after **24 hours of inactivity**, measured from the last
+turn start or completion. Reading/listing history does not extend the lifetime.
+Expired conversations disappear from listings and history/chat requests return
+404, including streaming requests before the stream starts. An expired chat cannot
+be revived; create a new conversation instead. Active chats can last more than a
+day: this is an inactivity policy, not a fixed lifetime from creation.
+
+Physical deletion is a separate scheduled operation. Apply migration
+`004_conversation_retention.sql` for its cleanup index, then run from `rawberry-api`:
+
+```powershell
+python -B -m app.cleanup_conversations --batch-size 500
+```
+
+The command requires `DATABASE_URL`, deletes at most 500 expired conversations per
+invocation (configurable), and reports a JSON count. Schedule it every 15 minutes;
+increase frequency/batch size if the expiration backlog exceeds that capacity.
+Until cleanup runs, expired data remains stored but inaccessible through the API.
+The command deletes related turns, legacy messages/citations, and access rows in
+one transaction. It preserves uploaded documents, embeddings, and user preferences.
+Legacy sessions without public API IDs are excluded. Recent pending generations
+are protected for the existing five-minute timeout; stale pending turns do not
+block deletion indefinitely. Concurrent cleanup workers skip locked conversations.
+
+For GCP, package this command as the Cloud Run Job command/arguments using the API
+image and the same database connectivity/secrets as the API. Configure the scheduler
+and job in deployment infrastructure; this change does not provision cloud resources
+or install a schedule automatically. In-memory development storage enforces the same
+expiration checks and offers `purge_expired_conversations()` for local cleanup; the
+scheduled command intentionally refuses to fall back to in-memory storage.
+
 Each conversation has independent history, but may retrieve from **all documents
 owned by its user**, including documents uploaded after the conversation was created.
 The model receives at most ten completed prior turns with a 12,000-character history
@@ -181,7 +226,8 @@ the question. An ANN index and relevance-threshold tuning are deferred.
 
 Apply migration `003_vector_embeddings.sql` after migrations 001 and 002 before
 starting the updated API. It adds an ID sequence for new embedding rows without
-replacing existing data. Startup refuses a configured database missing this migration.
+replacing existing data. Apply migrations 004 and 005 next for retention and
+conversation descriptions; current startup requires migration 005.
 Coordinate execution on the shared Cloud SQL database with the database owner.
 Old TXT uploads remain stored; re-upload their original files to create searchable
 vectors. There is no automatic historical backfill in this sprint.

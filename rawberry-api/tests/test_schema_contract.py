@@ -41,6 +41,7 @@ def test_migrated_database_round_trips_public_models(database_url):
     conversation = ConversationRecord.model_validate(repository.create_conversation(owner, 'Contract'), strict=True)
     assert UUID(conversation.id) and conversation.user_id == owner
     assert conversation.title == 'Contract'
+    assert conversation.description is None
     assert conversation.created_at.utcoffset() is not None
     assert conversation.updated_at.utcoffset() is not None
     assert ConversationRecord.model_validate(repository.list_conversations(owner)[0], strict=True) == conversation
@@ -49,6 +50,8 @@ def test_migrated_database_round_trips_public_models(database_url):
     pending = MessageRecord.model_validate(repository.list_messages(owner, conversation.id)[0], strict=True)
     assert (pending.turn_id, pending.role, pending.content, pending.status) == (turn['id'], 'user', 'Question', 'pending')
     repository.finish_turn(owner, conversation.id, turn['id'], 'Answer')
+    saved_conversation = ConversationRecord.model_validate(repository.list_conversations(owner)[0], strict=True)
+    assert saved_conversation.description == 'Question: Question Answer: Answer'
     failed_turn = repository.start_turn(owner, conversation.id, 'Another question')
     repository.finish_turn(owner, conversation.id, failed_turn['id'], None)
     messages = [MessageRecord.model_validate(row, strict=True)
