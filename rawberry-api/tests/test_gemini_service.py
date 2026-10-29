@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from app.config import Settings
 from app.services.chat_service import ChatService
 from app.services.gemini_service import GeminiChatClient, MockChatClient
@@ -15,7 +17,8 @@ def test_gemini_client_falls_back_to_mock_response_when_disabled():
     assert client.generate_reply("hello") == "You said: hello"
 
 
-def test_gemini_client_uses_real_client_when_enabled(monkeypatch):
+@pytest.mark.parametrize('instruction', [None, 'Keep answers concise.'])
+def test_gemini_client_uses_real_client_when_enabled(monkeypatch, instruction):
     settings = Settings(google_cloud_project="demo-project", use_mock_chat=False)
 
     fake_client = MagicMock()
@@ -29,7 +32,12 @@ def test_gemini_client_uses_real_client_when_enabled(monkeypatch):
     )
 
     client = GeminiChatClient(settings)
-    assert client.generate_reply("hello") == "hi from gemini"
+    assert client.generate_reply("hello", system_instruction=instruction) == "hi from gemini"
+    fake_client.models.generate_content.assert_called_once_with(
+        model=settings.gemini_model,
+        contents='hello',
+        config={'system_instruction': instruction} if instruction else None,
+    )
 
 
 def test_chat_service_uses_mock_client_by_default():

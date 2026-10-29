@@ -98,9 +98,11 @@ def test_removed_identity_fields_and_old_contract_rejected(client):
 def exercise_isolation(store):
     app = create_app(store=store)
     captured = []
+    instructions = []
     class CapturingLLM:
-        def generate_reply(self, message):
+        def generate_reply(self, message, *, system_instruction=None):
             captured.append(message)
+            instructions.append(system_instruction)
             return 'answer-' + str(len(captured))
     app.dependency_overrides[get_chat_service] = lambda: ChatService(store, llm_client=CapturingLLM())
     with TestClient(app, headers={'X-User-ID': 'alice'}) as client:
@@ -119,14 +121,17 @@ def exercise_isolation(store):
         assert first_reply.status_code == 200
         assert 'recent_items' not in first_reply.json()
         assert 'alice-document' in captured[-1] and 'bob-document' not in captured[-1]
-        assert 'alice-preference' in captured[-1] and 'bob-preference' not in captured[-1]
+        assert instructions[-1] == 'alice-preference'
+        assert 'alice-preference' not in captured[-1] and 'bob-preference' not in captured[-1]
         assert ask(client, first, 'follow-up').status_code == 200
         assert 'first-conversation-only' in captured[-1] and 'answer-1' in captured[-1]
         assert ask(client, second, 'gamma separate').status_code == 200
         assert 'first-conversation-only' not in captured[-1]
         assert 'alice-document' in captured[-1]  # all of this user's documents are available in every chat
+        assert instructions[-1] == 'alice-preference'
         assert ask(client, other, 'gamma', user='bob').status_code == 200
         assert 'bob-document' in captured[-1] and 'alice-document' not in captured[-1]
+        assert instructions[-1] == 'bob-preference'
         history = client.get('/conversations/' + first + '/messages').json()
         assert [m['role'] for m in history] == ['user', 'assistant', 'user', 'assistant']
         assert [m['content'] for m in history] == ['gamma first-conversation-only', 'answer-1', 'follow-up', 'answer-2']
@@ -138,6 +143,34 @@ def exercise_isolation(store):
 
 def test_users_and_conversations_are_isolated():
     exercise_isolation(InMemoryStore())
+
+
+@pytest.mark.parametrize('stream', [False, True])
+def test_preferences_are_separate_system_instructions_and_clear_on_next_turn(client, stream):
+    llm = MagicMock()
+    llm.generate_reply.return_value = 'An answer'
+    store = client.app.state.store
+    client.app.dependency_overrides[get_chat_service] = lambda: ChatService(store, llm_client=llm)
+    preference = 'Keep answers concise.'
+    assert client.put('/me/system-prompt', json={'prompt': preference}).status_code == 200
+    first = conversation(client)
+    assert ask(client, first, 'Explain gravity', stream=stream).status_code == 200
+    assert llm.generate_reply.call_args.kwargs == {'system_instruction': preference}
+    assert preference not in llm.generate_reply.call_args.args[0]
+    # The preference applies to new chats too, without copying it into history.
+    second = conversation(client)
+    assert ask(client, second, 'Explain tides', stream=stream).status_code == 200
+    assert llm.generate_reply.call_args.kwargs == {'system_instruction': preference}
+    assert preference not in llm.generate_reply.call_args.args[0]
+    updated_preference = 'Use a professional tone.'
+    assert client.put('/me/system-prompt', json={'prompt': updated_preference}).status_code == 200
+    assert ask(client, first, 'Explain further', stream=stream).status_code == 200
+    assert llm.generate_reply.call_args.kwargs == {'system_instruction': updated_preference}
+    assert updated_preference not in llm.generate_reply.call_args.args[0]
+    assert client.put('/me/system-prompt', json={'prompt': ''}).status_code == 200
+    assert ask(client, first, 'Tell me more', stream=stream).status_code == 200
+    assert llm.generate_reply.call_args.kwargs == {'system_instruction': None}
+    assert preference not in llm.generate_reply.call_args.args[0]
 
 
 def test_stream_events_and_persisted_history(client):
@@ -348,5 +381,5 @@ def test_upload_chunks_reach_stage_one_retrieval(client, monkeypatch):
     response = ask(client, conversation(client), 'How long does the moon orbit Earth?')
     assert response.status_code == 200
     assert 'The moon orbits Earth every 27 days.' in response.json()['reply']
-    assert 'Answer in one sentence.' in response.json()['reply']
+    assert 'Answer in one sentence.' not in response.json()['reply']  # mock echoes only message content
     assert owners == ['alice']

@@ -8,8 +8,8 @@ except ModuleNotFoundError:  # pragma: no cover
     genai = None
 
 class MockChatClient:
-    def generate_reply(self, message: str) -> str:
-        # Return an echo response without calling Gemini.
+    def generate_reply(self, message: str, *, system_instruction: str | None = None) -> str:
+        # Accept the same configuration as Gemini; echo content without simulating preferences.
         if "Use the following document context" in message:
             return message
         return f"You said: {message}"
@@ -37,10 +37,10 @@ class GeminiChatClient:
             return False
         return bool(self._get_project_id())
 
-    def generate_reply(self, message: str) -> str:
+    def generate_reply(self, message: str, *, system_instruction: str | None = None) -> str:
         # Generate a Gemini response or use the configured mock fallback.
         if not self.should_use_real_client():
-            return MockChatClient().generate_reply(message)
+            return MockChatClient().generate_reply(message, system_instruction=system_instruction)
 
         if genai is None:
             raise RuntimeError("google-genai is not installed. Install it from requirements.txt.")
@@ -66,6 +66,7 @@ class GeminiChatClient:
             response = client.models.generate_content(
                 model=self.settings.gemini_model,
                 contents=message,
+                config={"system_instruction": system_instruction} if system_instruction else None,
             )
             text = getattr(response, "text", None)
             if text:

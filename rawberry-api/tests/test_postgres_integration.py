@@ -344,7 +344,7 @@ def test_no_match_does_not_inject_another_users_sources(database_url):
         assert response.json()['reply'] == 'A response without source context.'
     # Preserve the current no-match contract: generation receives the question
     # without claiming any retrieved evidence; it is not forced to abstain.
-    llm.generate_reply.assert_called_once_with('PAYROLL')
+    llm.generate_reply.assert_called_once_with('PAYROLL', system_instruction=None)
 
 
 @pytest.mark.parametrize('endpoint', ['/chat', '/chat/stream'])
