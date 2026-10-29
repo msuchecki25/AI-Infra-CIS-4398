@@ -12,6 +12,8 @@ from app.retrieval.repository import InMemoryRetrievalRepository, RetrievalRepos
 
 
 class RetrievalPackageTests(unittest.TestCase):
+    # Keep the public surface small so callers depend on the service contract,
+    # not implementation internals.
     def test_public_api_is_limited_to_service_and_result(self) -> None:
         self.assertEqual(
             app.retrieval.__all__,
@@ -25,6 +27,7 @@ class RetrievalPackageTests(unittest.TestCase):
         )
 
     def test_embedding_provider_contract(self) -> None:
+        # Query and document embedding providers share one interface across retrieval backends.
         query_hints = get_type_hints(EmbeddingProvider.embed_query)
         document_hints = get_type_hints(EmbeddingProvider.embed_document)
 
@@ -36,6 +39,7 @@ class RetrievalPackageTests(unittest.TestCase):
         self.assertEqual(document_hints, {"text": str, "return": list[float]})
 
     def test_repository_search_contract(self) -> None:
+        # The owner scope travels with each search so storage adapters can enforce isolation.
         hints = get_type_hints(RetrievalRepository.search)
 
         self.assertEqual(
@@ -53,6 +57,7 @@ class RetrievalPackageTests(unittest.TestCase):
         )
 
     def test_service_contract_and_empty_query(self) -> None:
+        # Empty queries and unusable limits should produce no retrieval results.
         hints = get_type_hints(RetrievalService.retrieve)
 
         self.assertEqual(
@@ -70,6 +75,8 @@ class RetrievalPackageTests(unittest.TestCase):
         self.assertEqual(service.retrieve("example query", limit=-1), [])
 
     def test_retrieval_ranks_matching_chunks_and_applies_limit(self) -> None:
+        # Hash embeddings keep this ranking check deterministic and local.
+        # PostgreSQL/pgvector behavior is covered separately.
         embeddings = HashEmbeddingProvider()
         repository = InMemoryRetrievalRepository()
         repository.upsert(1, "doc-a", "The moon orbits the earth", embeddings.embed_document("The moon orbits the earth"))
@@ -84,6 +91,8 @@ class RetrievalPackageTests(unittest.TestCase):
         self.assertLessEqual(results[0].similarity, 1.0)
 
     def test_retrieval_excludes_other_owners(self) -> None:
+        # An explicit owner sees only their chunks; an unscoped search must not
+        # expose any owned chunks.
         embeddings = HashEmbeddingProvider()
         repository = InMemoryRetrievalRepository()
         for index, owner in enumerate(['alice', 'bob']):
@@ -95,6 +104,8 @@ class RetrievalPackageTests(unittest.TestCase):
         self.assertEqual(service.retrieve('moon'), [])
 
     def test_retrieval_matches_only_the_requested_owner(self) -> None:
+        # An owner-scoped query excludes other users and unowned chunks. An
+        # unscoped query returns only unowned chunks.
         embeddings = HashEmbeddingProvider()
         repository = InMemoryRetrievalRepository()
         embedding = embeddings.embed_document("shared query")
