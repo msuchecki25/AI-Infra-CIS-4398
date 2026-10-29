@@ -15,7 +15,10 @@ from app.main import create_app
 from app.postgres_repository import PostgresRepository
 from app.repository import ConversationBusy, ResourceNotFound, StorageError
 from app.retrieval.embeddings import HashEmbeddingProvider
+from pdf_samples import make_pdf
 from test_api import exercise_isolation
+
+SCANNED_PDF = make_pdf('')  # valid PDF with no text layer
 
 
 @pytest.fixture
@@ -71,7 +74,7 @@ def test_data_survives_application_recreation_and_is_shared(database_url, monkey
     with TestClient(create_app(), headers={'X-User-ID': 'alice'}) as first:
         uploaded = first.post("/upload", files=[
             ("files", ("notes.txt", b"alpha beta gamma", "text/plain")),
-            ("files", ("paper.pdf", b"%PDF-1.7 example", "application/pdf")),
+            ("files", ("paper.pdf", SCANNED_PDF, "application/pdf")),
         ])
         assert uploaded.status_code == 200
         assert [d['embedding_status'] for d in uploaded.json()] == ['completed', 'pending']
@@ -89,7 +92,7 @@ def test_data_survives_application_recreation_and_is_shared(database_url, monkey
         chat = restarted.post("/chat", json={"conversation_id": conversation_id, "message": "gamma?"})
         assert chat.status_code == 200
         assert "alpha beta gamma" in chat.json()["reply"]
-        assert restarted.app.state.store.get_document_content("alice", documents[1]["id"]) == b"%PDF-1.7 example"
+        assert restarted.app.state.store.get_document_content("alice", documents[1]["id"]) == SCANNED_PDF
         assert restarted.put("/me/system-prompt", json={"prompt": ""}).status_code == 200
     with TestClient(create_app(), headers={'X-User-ID': 'alice'}) as final:
         assert final.get("/me/system-prompt").json()["prompt"] == ""
@@ -117,6 +120,40 @@ def test_failed_batch_rolls_back_documents_bytes_and_chunks(database_url):
     for identifier in (first_id, second_id):
         with pytest.raises(ResourceNotFound):
             repository.get_document_content('alice', identifier)
+
+
+def test_uploaded_pdf_is_embedded_and_answers_chat_with_its_page(database_url):
+    repository = PostgresRepository(database_url)
+    with TestClient(create_app(store=repository), headers={'X-User-ID': 'alice'}) as client:
+        uploaded = client.post('/upload', files=[
+            ('files', ('paper.pdf', make_pdf('intro page', 'zebra migration patterns'), 'application/pdf')),
+        ])
+        assert uploaded.status_code == 200
+        assert uploaded.json()[0]['embedding_status'] == 'completed'
+        assert uploaded.json()[0]['chunk_count'] == 2
+        results = repository.search_chunks('alice', 'zebra migration')
+        assert (results[0]['text'], results[0]['page_number']) == ('zebra migration patterns', 2)
+        conversation_id = client.post('/conversations', json={'title': 'PDF'}).json()['id']
+        chat = client.post('/chat', json={'conversation_id': conversation_id, 'message': 'zebra migration?'})
+        assert 'zebra migration patterns' in chat.json()['reply']
+    assert repository.search_chunks('bob', 'zebra migration') == []
+
+
+def test_ingestion_pipeline_indexes_documents_for_search(database_url):
+    import ingestion_pipeline
+
+    path = Path(__file__).resolve().parents[2] / 'testdocs' / 'google.txt'
+    raw_bytes = path.read_bytes()
+    repository = PostgresRepository(database_url)
+    document_id = ingestion_pipeline.ingest_document(
+        repository, 'alice', str(path), raw_bytes, ingestion_pipeline.extract_pages('.txt', raw_bytes))
+
+    documents = repository.list_documents('alice')
+    assert [(d['id'], d['embedding_status']) for d in documents] == [(document_id, 'completed')]
+    assert documents[0]['chunk_count'] == len(repository.list_chunks('alice')) > 1
+    results = repository.search_chunks('alice', path.read_text().split('.')[0])
+    assert results and results[0]['document_id'] == document_id
+    assert repository.search_chunks('bob', 'google') == []
 
 
 def test_invalid_api_batch_writes_nothing(database_url):
