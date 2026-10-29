@@ -9,6 +9,7 @@ class Settings:
     google_cloud_project: str | None = None
     google_cloud_location: str = "global"
     use_mock_chat: bool = True
+    database_url: str | None = None
 
     @classmethod
     # Read application settings from environment variables.
@@ -27,6 +28,7 @@ class Settings:
             google_cloud_project=project,
             google_cloud_location=os.getenv("GOOGLE_CLOUD_LOCATION", "global"),
             use_mock_chat=use_mock_chat,
+            database_url=os.getenv("DATABASE_URL", "").strip() or None,
         )
 
 

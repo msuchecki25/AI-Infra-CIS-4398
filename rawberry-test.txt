@@ -1,0 +1,10 @@
+RAWBerry Project Notes
+
+RAWBerry helps users ask questions about uploaded documents.
+
+The backend uses FastAPI.
+The database uses PostgreSQL with pgvector.
+The planned AI integration uses Google Gemini.
+
+The project mascot is a purple strawberry named Berry.
+The team's weekly meeting is Thursday at 3 PM.

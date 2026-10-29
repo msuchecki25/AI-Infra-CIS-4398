@@ -5,6 +5,7 @@ from app.config import Settings
 from app.services.chat_service import ChatService
 from app.services.gemini_service import GeminiChatClient, MockChatClient
 from app.store import InMemoryStore
+from app.user_models import ChatRequest
 
 
 def test_gemini_client_falls_back_to_mock_response_when_disabled():
@@ -36,7 +37,8 @@ def test_chat_service_uses_mock_client_by_default():
     store = InMemoryStore()
 
     service = ChatService(store, settings=settings)
-    response = service.generate_reply_from_message("hello")
+    conversation = store.create_conversation("alice", "Test")
+    response = service.generate_reply("alice", ChatRequest(conversation_id=conversation["id"], message="hello")).reply
 
     assert response == "You said: hello"
     assert isinstance(service.llm_client, MockChatClient)
@@ -48,6 +50,7 @@ def test_chat_service_uses_gemini_when_available():
     fake_llm.generate_reply.return_value = "hello from gemini"
 
     service = ChatService(store, llm_client=fake_llm)
-    response = service.generate_reply_from_message("hello")
+    conversation = store.create_conversation("alice", "Test")
+    response = service.generate_reply("alice", ChatRequest(conversation_id=conversation["id"], message="hello")).reply
 
     assert response == "hello from gemini"
