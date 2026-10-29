@@ -30,7 +30,7 @@ are not supported. `/` and `/health` do not require user context.
   pgvector search in PostgreSQL mode.
 - Deterministic hash-vector retrieval in the isolated in-memory development mode.
 - Optional Vertex AI Gemini generation, or mock responses for local development.
-- Per-user response preferences.
+- Per-user response preferences passed through Gemini's dedicated `system_instruction` configuration.
 - Independent conversations with ordered user/assistant history and generation states.
 - SSE chat lifecycle events; generated tokens are not streamed individually.
 
@@ -93,6 +93,12 @@ Use its returned `id` as `conversation_id` in either chat endpoint:
 
 The response includes `conversation_id`, `turn_id`, and `reply`. Update preferences
 with `{"prompt": "Keep answers concise."}`.
+
+Preferences are loaded for each turn and sent separately from the user message,
+retrieved document context, and conversation history. Updates apply to subsequent
+turns in existing and new chats; an empty preference clears the system instruction.
+Mock mode accepts the same configuration but only echoes message content and does
+not simulate tone or length preferences. No schema migration is needed.
 
 ## Document-only RAG input
 

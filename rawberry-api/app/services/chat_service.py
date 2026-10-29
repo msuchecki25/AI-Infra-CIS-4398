@@ -50,9 +50,7 @@ class ChatService:
                 remaining -= len(entry)
             if history:
                 message = 'Conversation history (prior messages):\n' + '\n'.join(reversed(history)) + '\nCurrent message:\n' + message
-            if preferences:
-                message = f'User response preferences (follow when relevant):\n{preferences}\n\nUser message:\n{message}'
-            reply = self.llm_client.generate_reply(message)
+            reply = self.llm_client.generate_reply(message, system_instruction=preferences or None)
         except Exception as exc:
             try:
                 self.store.finish_turn(user_id, conversation_id, turn['id'], None)
