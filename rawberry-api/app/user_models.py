@@ -46,6 +46,7 @@ class ConversationRecord(BaseModel):
     id: str
     user_id: str
     title: str
+    description: str | None = Field(default=None, max_length=300)
     created_at: datetime
     updated_at: datetime
 

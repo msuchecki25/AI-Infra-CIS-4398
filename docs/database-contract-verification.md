@@ -9,7 +9,7 @@ not just `init/02_schema.sql`.
 against the public Pydantic models. It covers documents, chunks, metadata, binary
 contents, preferences, conversation timestamps, and pending/completed/failed turns.
 The existing PostgreSQL integration tests cover ownership, rollback, persistence,
-vector retrieval, and recovery. Their fixture applies migrations 001–003 twice
+vector retrieval, and recovery. Their fixture applies migrations 001–005 twice
 to test repeatability and preserves seeded legacy records.
 
 ## Run against a disposable local database

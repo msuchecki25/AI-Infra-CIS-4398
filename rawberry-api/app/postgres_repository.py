@@ -11,7 +11,7 @@ from typing import Any
 from app.repository import StorageError
 from uuid import uuid4
 
-from app.conversation import TURN_TIMEOUT_SECONDS, messages_from_turns
+from app.conversation import CONVERSATION_TTL_SECONDS, TURN_TIMEOUT_SECONDS, describe_exchange, messages_from_turns
 from app.repository import ConversationBusy, ResourceNotFound
 from app.retrieval.embeddings import (
     EMBEDDING_DIMENSIONS,
@@ -52,7 +52,7 @@ class PostgresRepository:
         with self._connection() as connection:
             row = connection.execute(
                 "SELECT version FROM schema_migration WHERE version = %s",
-                ('003_vector_embeddings',),
+                ('005_conversation_descriptions',),
             ).fetchone()
             if row is None:
                 raise StorageError("Required database migration is missing")
@@ -170,23 +170,25 @@ class PostgresRepository:
         with self._connection() as connection:
             return connection.execute(
                 "INSERT INTO chat_session(public_id, user_id, title, created_at) "
-                "VALUES (%s, %s, %s, CURRENT_DATE) RETURNING public_id::text AS id, user_id, title, "
+                "VALUES (%s, %s, %s, CURRENT_DATE) RETURNING public_id::text AS id, user_id, title, description, "
                 "created_ts AS created_at, updated_ts AS updated_at", (str(uuid4()), user_id, title),
             ).fetchone()
 
     def list_conversations(self, user_id: str) -> list[dict[str, Any]]:
         with self._connection() as connection:
             return connection.execute(
-                "SELECT public_id::text AS id, user_id, title, created_ts AS created_at, updated_ts AS updated_at "
-                "FROM chat_session WHERE user_id = %s AND public_id IS NOT NULL ORDER BY created_ts, id",
-                (user_id,),
+                "SELECT public_id::text AS id, user_id, title, description, created_ts AS created_at, updated_ts AS updated_at "
+                "FROM chat_session WHERE user_id = %s AND public_id IS NOT NULL "
+                "AND updated_ts > CURRENT_TIMESTAMP - (%s * INTERVAL '1 second') ORDER BY created_ts, id",
+                (user_id, CONVERSATION_TTL_SECONDS),
             ).fetchall()
 
     @staticmethod
     def _owned_conversation(connection, user_id: str, conversation_id: str):
         row = connection.execute(
-            "SELECT id FROM chat_session WHERE user_id = %s AND public_id::text = %s FOR UPDATE",
-            (user_id, conversation_id),
+            "SELECT id FROM chat_session WHERE user_id = %s AND public_id::text = %s "
+            "AND updated_ts > CURRENT_TIMESTAMP - (%s * INTERVAL '1 second') FOR UPDATE",
+            (user_id, conversation_id, CONVERSATION_TTL_SECONDS),
         ).fetchone()
         if row is None:
             raise ResourceNotFound()
@@ -235,9 +237,41 @@ class PostgresRepository:
             session_id = self._owned_conversation(connection, user_id, conversation_id)
             result = connection.execute(
                 "UPDATE chat_turn SET reply = %s, status = %s, completed_at = CURRENT_TIMESTAMP "
-                "WHERE session_id = %s AND id::text = %s AND status = 'pending' RETURNING id",
+                "WHERE session_id = %s AND id::text = %s AND status = 'pending' RETURNING id, prompt",
                 (reply, 'completed' if reply is not None else 'failed', session_id, turn_id),
             ).fetchone()
             if result is None:
                 raise ConversationBusy()
-            connection.execute("UPDATE chat_session SET updated_ts = CURRENT_TIMESTAMP WHERE id = %s", (session_id,))
+            description = describe_exchange(result['prompt'], reply) if reply is not None else None
+            connection.execute("UPDATE chat_session SET updated_ts = CURRENT_TIMESTAMP, "
+                               "description = COALESCE(description, %s) WHERE id = %s", (description, session_id))
+
+    def purge_expired_conversations(self, batch_size: int = 500) -> int:
+        """Delete one locked batch atomically; never delete documents or preferences.
+
+        Skip sessions locked by API requests or another cleanup worker. A recent
+        pending turn is protected; abandoned turns cannot prevent cleanup forever.
+        Legacy sessions without API public IDs are outside this retention policy.
+        """
+        if batch_size <= 0:
+            raise ValueError('batch_size must be positive')
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT s.id FROM chat_session s WHERE s.public_id IS NOT NULL "
+                "AND s.updated_ts <= CURRENT_TIMESTAMP - (%s * INTERVAL '1 second') "
+                "AND NOT EXISTS (SELECT 1 FROM chat_turn t WHERE t.session_id = s.id "
+                "AND t.status = 'pending' AND t.created_at > CURRENT_TIMESTAMP - (%s * INTERVAL '1 second')) "
+                "ORDER BY s.updated_ts, s.id LIMIT %s FOR UPDATE OF s SKIP LOCKED",
+                (CONVERSATION_TTL_SECONDS, TURN_TIMEOUT_SECONDS, batch_size),
+            ).fetchall()
+            ids = [row['id'] for row in rows]
+            if not ids:
+                return 0
+            # Delete in FK order, including legacy children attached to API sessions.
+            connection.execute("DELETE FROM citation WHERE message_id IN "
+                               "(SELECT id FROM message WHERE session_id = ANY(%s))", (ids,))
+            connection.execute("DELETE FROM message WHERE session_id = ANY(%s)", (ids,))
+            connection.execute("DELETE FROM chat_session_access WHERE session_id = ANY(%s)", (ids,))
+            connection.execute("DELETE FROM chat_turn WHERE session_id = ANY(%s)", (ids,))
+            connection.execute("DELETE FROM chat_session WHERE id = ANY(%s)", (ids,))
+            return len(ids)

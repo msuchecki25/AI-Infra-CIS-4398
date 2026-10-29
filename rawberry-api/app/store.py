@@ -5,12 +5,15 @@ from threading import RLock
 from typing import Any
 from uuid import uuid4
 
-from app.conversation import TURN_TIMEOUT_SECONDS, messages_from_turns
+from app.conversation import CONVERSATION_TTL_SECONDS, TURN_TIMEOUT_SECONDS, describe_exchange, messages_from_turns
 from app.repository import ConversationBusy, ResourceNotFound
 from app.retrieval.chunk_search import search_owned_chunks
 
 
 class InMemoryStore:
+    def _now(self):
+        return datetime.now(timezone.utc)
+
     def __init__(self) -> None:
         self._documents: list[dict[str, Any]] = []
         self._document_contents: dict[str, bytes] = {}
@@ -60,8 +63,9 @@ class InMemoryStore:
                 self._system_prompts.pop(user_id, None)
 
     def create_conversation(self, user_id: str, title: str) -> dict[str, Any]:
-        now = datetime.now(timezone.utc)
-        conversation = dict(id=str(uuid4()), user_id=user_id, title=title, created_at=now, updated_at=now)
+        now = self._now()
+        conversation = dict(id=str(uuid4()), user_id=user_id, title=title, description=None,
+                            created_at=now, updated_at=now)
         with self._lock:
             self._conversations[conversation['id']] = conversation
             self._turns[conversation['id']] = []
@@ -69,11 +73,13 @@ class InMemoryStore:
 
     def list_conversations(self, user_id: str) -> list[dict[str, Any]]:
         with self._lock:
-            return deepcopy([c for c in self._conversations.values() if c['user_id'] == user_id])
+            return deepcopy([c for c in self._conversations.values() if c['user_id'] == user_id
+                             and (self._now() - c['updated_at']).total_seconds() < CONVERSATION_TTL_SECONDS])
 
     def _owned_conversation(self, user_id: str, conversation_id: str) -> dict[str, Any]:
         conversation = self._conversations.get(conversation_id)
-        if conversation is None or conversation['user_id'] != user_id:
+        if (conversation is None or conversation['user_id'] != user_id
+                or (self._now() - conversation['updated_at']).total_seconds() >= CONVERSATION_TTL_SECONDS):
             raise ResourceNotFound()
         return conversation
 
@@ -85,7 +91,7 @@ class InMemoryStore:
     def start_turn(self, user_id: str, conversation_id: str, message: str) -> dict[str, Any]:
         with self._lock:
             conversation = self._owned_conversation(user_id, conversation_id)
-            now = datetime.now(timezone.utc)
+            now = self._now()
             turns = self._turns[conversation_id]
             for turn in turns:
                 if turn['status'] == 'pending':
@@ -107,6 +113,23 @@ class InMemoryStore:
                 raise ResourceNotFound()
             if turn['status'] != 'pending':
                 raise ConversationBusy()
-            now = datetime.now(timezone.utc)
+            now = self._now()
             turn.update(status='completed' if reply is not None else 'failed', reply=reply, completed_at=now)
+            if reply is not None and conversation['description'] is None:
+                conversation['description'] = describe_exchange(turn['prompt'], reply)
             conversation['updated_at'] = now
+
+    def purge_expired_conversations(self, batch_size: int = 500) -> int:
+        if batch_size <= 0:
+            raise ValueError('batch_size must be positive')
+        with self._lock:
+            now = self._now()
+            expired = [identifier for identifier, conversation in self._conversations.items()
+                       if (now - conversation['updated_at']).total_seconds() >= CONVERSATION_TTL_SECONDS
+                       and not any(turn['status'] == 'pending'
+                                   and (now - turn['created_at']).total_seconds() < TURN_TIMEOUT_SECONDS
+                                   for turn in self._turns[identifier])][:batch_size]
+            for identifier in expired:
+                del self._turns[identifier]
+                del self._conversations[identifier]
+            return len(expired)
