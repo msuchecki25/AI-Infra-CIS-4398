@@ -5,15 +5,14 @@ from uuid import uuid4
 
 # app resolves to rawberry-api/app through the repository-level app package
 from app.config import get_settings
-# the /upload endpoint uses the same extraction and chunking
-from app.ingestion import UnreadableDocument, extract_pages, split_pages
+# the /upload endpoint uses the same file rules, extraction and chunking
+from app.ingestion import (ALLOWED_EXTENSIONS, MAX_FILE_SIZE_BYTES, InvalidFileContent,
+                           UnreadableDocument, extract_pages, split_pages)
 from app.postgres_repository import PostgresRepository
 from app.user_models import DocumentRecord
 
 # same owner rule as the user_id CHECK constraint in migration 002
 USER_ID_PATTERN = re.compile(r"^[!-~]{1,128}$")
-# matches DocumentService.ALLOWED_EXTENSIONS, minus .docx which has no loader yet
-SUPPORTED_EXTENSIONS = {".txt", ".pdf"}
 
 
 #updated later to fit final format from front end team
@@ -30,7 +29,11 @@ def load_documents(doc_path="testdocs"):
     for filename in sorted(os.listdir(doc_path)):
         path = os.path.join(doc_path, filename)
         ext = os.path.splitext(filename)[1].lower()
-        if not os.path.isfile(path) or ext not in SUPPORTED_EXTENSIONS:
+        if not os.path.isfile(path) or ext not in ALLOWED_EXTENSIONS:
+            continue
+        # same files the /upload endpoint rejects, skipped so one bad file doesn't stop the batch
+        if os.path.getsize(path) > MAX_FILE_SIZE_BYTES:
+            print(f"Skipping {path}, larger than the {MAX_FILE_SIZE_BYTES // (1024 * 1024)}MB limit")
             continue
         with open(path, "rb") as file:
             raw_bytes = file.read()
@@ -39,15 +42,14 @@ def load_documents(doc_path="testdocs"):
             continue
         try:
             pages = extract_pages(ext, raw_bytes)
-        except (UnicodeDecodeError, UnreadableDocument):
-            # same files the /upload endpoint rejects, skipped so one bad file doesn't stop the batch
+        except (InvalidFileContent, UnicodeDecodeError, UnreadableDocument):
             print(f"Skipping unreadable file {path}")
             continue
         documents.append((path, raw_bytes, pages))
 
     # ensure documents actually contains documents
     if len(documents) == 0:
-        raise FileNotFoundError(f"No .txt or .pdf files found in {doc_path} directory. Add files first.")
+        raise FileNotFoundError(f"No {', '.join(ALLOWED_EXTENSIONS)} files found in {doc_path} directory. Add files first.")
 
     # output checks, shows first 2 docs
     for i, (path, raw_bytes, pages) in enumerate(documents[:2]):
