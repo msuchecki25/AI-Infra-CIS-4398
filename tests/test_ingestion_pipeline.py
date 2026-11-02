@@ -38,6 +38,23 @@ def test_load_documents_rejects_missing_or_empty_directory(tmp_path):
         ingestion_pipeline.load_documents(str(tmp_path))
 
 
+def test_load_documents_reads_docx_and_skips_files_upload_rejects(tmp_path, monkeypatch):
+    from docx import Document
+
+    word = Document()
+    word.add_paragraph("alpha from word")
+    word.save(tmp_path / "notes.docx")
+    (tmp_path / "fake.pdf").write_bytes(b"not a pdf")
+    (tmp_path / "damaged.docx").write_bytes(b"PK\x03\x04 damaged")
+    (tmp_path / "large.txt").write_text("x" * 1_000_001)
+    monkeypatch.setattr(ingestion_pipeline, "MAX_FILE_SIZE_BYTES", 1_000_000)
+
+    documents = ingestion_pipeline.load_documents(str(tmp_path))
+
+    assert [(Path(path).name, pages) for path, _, pages in documents] == [
+        ("notes.docx", [(None, "alpha from word")])]
+
+
 def test_split_documents_keeps_contiguous_indexes_and_page_numbers():
     pages = [(1, "alpha " * 400), (2, "   "), (3, "beta " * 50)]
     chunks = ingestion_pipeline.split_documents(pages, "doc-1")

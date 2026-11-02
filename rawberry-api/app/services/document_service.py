@@ -5,15 +5,16 @@ from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile, status
 
-from app.ingestion import UnreadableDocument, extract_pages, split_pages
+from app import ingestion
+from app.ingestion import InvalidFileContent, UnreadableDocument, extract_pages, split_pages
 from app.models import UploadResponse
 from app.user_models import DocumentRecord
 from app.repository import Repository
 
-# TXT and PDF text is chunked here; DOCX extraction remains pending. PostgreSQL embeds chunks on save.
+# TXT, PDF and DOCX text is chunked here; PostgreSQL embeds chunks on save.
 class DocumentService:
-    MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024
-    ALLOWED_EXTENSIONS = {".pdf": "application/pdf", ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".txt": "text/plain"}
+    MAX_FILE_SIZE_BYTES = ingestion.MAX_FILE_SIZE_BYTES
+    ALLOWED_EXTENSIONS = ingestion.ALLOWED_EXTENSIONS
 
     def __init__(self, store: Repository) -> None:
         # Store uploaded files and their extracted chunks through the repository.
@@ -21,9 +22,9 @@ class DocumentService:
 
 
     def _extract_pages(self, ext: str, raw_bytes: bytes) -> list[tuple[int | None, str]]:
-        # Cheap signature checks run before any parsing.
-        if (ext == ".pdf" and not raw_bytes.startswith(b"%PDF-")) or (
-                ext == ".docx" and not raw_bytes.startswith(b"PK\x03\x04")):
+        try:
+            return extract_pages(ext, raw_bytes)
+        except InvalidFileContent as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
@@ -31,9 +32,7 @@ class DocumentService:
                     "error_code": "INVALID_FILE_CONTENT",
                     "message": "File content does not match its filename extension.",
                 },
-            )
-        try:
-            return extract_pages(ext, raw_bytes)
+            ) from exc
         except UnicodeDecodeError as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -120,7 +119,7 @@ class DocumentService:
             )
 
         statuses = self.store.save_documents(user_id, documents)
-        # Report what storage actually indexed; DOCX and PDFs without a text layer have no chunks.
+        # Report what storage actually indexed; PDFs without a text layer and empty files have no chunks.
         for response, embedding_status in zip(responses, statuses, strict=True):
             response.embedding_status = embedding_status
             if embedding_status == "completed":
