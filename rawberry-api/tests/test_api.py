@@ -22,7 +22,7 @@ def client():
 
 
 def conversation(client, user='alice'):
-    response = client.post('/conversations', headers={'X-User-ID': user}, json={'title': 'Research'})
+    response = client.post('/conversations', headers={'X-User-ID': user}, json={'domain': 'education', 'title': 'Research'})
     assert response.status_code == 201
     return response.json()['id']
 
@@ -33,7 +33,7 @@ def ask(client, identifier, message='hello', user='alice', stream=False):
 
 
 def upload(client, text=b'alpha gamma alice secret', user='alice', name='notes.txt'):
-    return client.post('/upload', headers={'X-User-ID': user}, files=[('files', (name, text, 'text/plain'))])
+    return client.post('/uploadedu', headers={'X-Developer-Key': 'test-upload-key', **({'X-User-ID': user})}, files=[('files', (name, text, 'text/plain'))])
 
 
 def test_public_endpoints_and_isolated_storage():
@@ -49,7 +49,7 @@ def test_public_endpoints_and_isolated_storage():
 
 
 @pytest.mark.parametrize('method,path,body', [
-    ('get', '/documents', None), ('get', '/conversations', None),
+    ('get', '/uploadedu', None), ('get', '/conversations', None),
     ('get', '/me/system-prompt', None), ('put', '/me/system-prompt', {'prompt': 'hi'}),
     ('post', '/conversations', {}),
     ('post', '/chat', {'conversation_id': str(uuid4()), 'message': 'hi'}),
@@ -61,38 +61,35 @@ def test_every_data_route_requires_user_context(method, path, body):
         assert client.request(method, path, json=body).status_code == 422
 
 
-def test_upload_requires_user_context():
+def test_developer_upload_does_not_require_user_context():
     with TestClient(create_app(store=InMemoryStore())) as client:
-        assert client.post('/upload', files=[('files', ('a.txt', b'hello', 'text/plain'))]).status_code == 422
+        assert client.post('/uploadedu', headers={'X-Developer-Key': 'test-upload-key'}, files=[('files', ('a.txt', b'hello', 'text/plain'))]).status_code == 200
 
 
 @pytest.mark.parametrize('identifier', ['', ' ', ' alice', 'alice ', 'a b', 'a' * 129])
 def test_invalid_user_context_rejected(client, identifier):
-    assert client.get('/documents', headers={'X-User-ID': identifier}).status_code == 422
+    assert client.get('/uploadedu', headers={'X-User-ID': identifier}).status_code == 422
 
 
 def test_duplicate_identity_rejected():
     with TestClient(create_app(store=InMemoryStore())) as client:
-        assert client.get('/documents', headers=[('X-User-ID', 'alice'), ('X-User-ID', 'bob')]).status_code == 422
+        assert client.get('/uploadedu', headers=[('X-User-ID', 'alice'), ('X-User-ID', 'bob')]).status_code == 422
 
 
 def test_identity_is_case_sensitive_and_not_numeric(client):
     for user in ['42', '042', 'Alice', 'alice']:
-        assert upload(client, text=user.encode(), user=user).status_code == 200
+        conversation(client, user)
     for user in ['42', '042', 'Alice', 'alice']:
-        documents = client.get('/documents', headers={'X-User-ID': user}).json()
-        assert len(documents) == 1
-        assert documents[0]['user_id'] == user
-        assert client.app.state.store.get_document_content(user, documents[0]['id']) == user.encode()
-
+        records = client.get('/conversations', headers={'X-User-ID': user}).json()
+        assert len(records) == 1 and records[0]['user_id'] == user
 
 
 def test_removed_identity_fields_and_old_contract_rejected(client):
     assert client.post('/chat', json={'userid': 42, 'data': {'window': 1, 'agent': 'test'}, 'message': 'hello'}).status_code == 422
-    assert client.post('/upload', files=[('files', ('a.txt', b'hello', 'text/plain'))], data={'owner_id': 'bob'}).status_code == 422
+    assert client.post('/upload', files=[('files', ('a.txt', b'hello', 'text/plain'))]).status_code == 404
     assert client.put('/me/system-prompt', json={'prompt': 'hello', 'user_id': 'bob'}).status_code == 422
     assert client.get('/users/bob/system-prompt').status_code == 404
-    assert client.get('/documents?user_id=bob').status_code == 422
+    assert client.get('/uploadedu?user_id=bob').status_code == 422
 
 
 def exercise_isolation(store):
@@ -111,7 +108,7 @@ def exercise_isolation(store):
             assert upload(client, text=('gamma ' + user + '-document').encode(), user=user).status_code == 200
         first, second, other = conversation(client), conversation(client), conversation(client, 'bob')
         assert len(client.get('/conversations').json()) == 2
-        assert len(client.get('/documents').json()) == 1
+        assert len(client.get('/uploadedu').json()) == 2
         assert client.get('/me/system-prompt').json() == {'user_id': 'alice', 'prompt': 'alice-preference'}
         assert client.get('/conversations/' + other + '/messages').status_code == 404
         assert ask(client, other).status_code == 404
@@ -120,23 +117,23 @@ def exercise_isolation(store):
         first_reply = ask(client, first, 'gamma first-conversation-only')
         assert first_reply.status_code == 200
         assert 'recent_items' not in first_reply.json()
-        assert 'alice-document' in captured[-1] and 'bob-document' not in captured[-1]
+        assert 'alice-document' in captured[-1] and 'bob-document' in captured[-1]
         assert instructions[-1] == 'alice-preference'
         assert 'alice-preference' not in captured[-1] and 'bob-preference' not in captured[-1]
         assert ask(client, first, 'follow-up').status_code == 200
         assert 'first-conversation-only' in captured[-1] and 'answer-1' in captured[-1]
         assert ask(client, second, 'gamma separate').status_code == 200
         assert 'first-conversation-only' not in captured[-1]
-        assert 'alice-document' in captured[-1]  # all of this user's documents are available in every chat
+        assert 'alice-document' in captured[-1]  # every education chat uses the shared education corpus
         assert instructions[-1] == 'alice-preference'
         assert ask(client, other, 'gamma', user='bob').status_code == 200
-        assert 'bob-document' in captured[-1] and 'alice-document' not in captured[-1]
+        assert 'bob-document' in captured[-1] and 'alice-document' in captured[-1]
         assert instructions[-1] == 'bob-preference'
         history = client.get('/conversations/' + first + '/messages').json()
         assert [m['role'] for m in history] == ['user', 'assistant', 'user', 'assistant']
         assert [m['content'] for m in history] == ['gamma first-conversation-only', 'answer-1', 'follow-up', 'answer-2']
         assert all(m['status'] == 'completed' for m in history)
-        alice_document = store.list_documents('alice')[0]['id']
+        alice_document = store.list_documents('corpus:education')[0]['id']
         with pytest.raises(ResourceNotFound):
             store.get_document_content('bob', alice_document)
 
@@ -238,8 +235,8 @@ def test_upload_retains_bytes_and_txt_chunks(client):
     document = response.json()[0]
     assert document['chunk_count'] == 1 and document['embedding_status'] == 'pending'
     store = client.app.state.store
-    assert store.get_document_content('alice', document['document_id']) == b'hello gamma'
-    assert store.list_chunks('alice')[0]['page_number'] is None
+    assert store.get_document_content('corpus:education', document['document_id']) == b'hello gamma'
+    assert store.list_chunks('corpus:education')[0]['page_number'] is None
     assert store.list_chunks('bob') == []
 
 
@@ -248,10 +245,10 @@ def test_pdf_upload_chunks_each_page_with_its_page_number(client):
     assert response.status_code == 200
     document = response.json()[0]
     assert document['chunk_count'] == 2
-    chunks = client.app.state.store.list_chunks('alice')
+    chunks = client.app.state.store.list_chunks('corpus:education')
     assert [(c['chunk_index'], c['page_number'], c['text']) for c in chunks] == [
         (0, 1, 'alpha first page'), (1, 3, 'gamma third page')]
-    assert client.app.state.store.search_chunks('alice', 'gamma')[0]['page_number'] == 3
+    assert client.app.state.store.search_chunks('corpus:education', 'gamma')[0]['page_number'] == 3
     # A PDF without a text layer (e.g. a scan) is stored but has nothing to search yet.
     assert upload(client, make_pdf(''), name='scan.pdf').json()[0]['chunk_count'] == 0
 
@@ -259,7 +256,7 @@ def test_pdf_upload_chunks_each_page_with_its_page_number(client):
 def test_long_text_is_split_on_word_boundaries_with_overlap(client):
     words = ' '.join(f'word{i}' for i in range(600))
     assert upload(client, words.encode()).status_code == 200
-    chunks = [c['text'] for c in client.app.state.store.list_chunks('alice')]
+    chunks = [c['text'] for c in client.app.state.store.list_chunks('corpus:education')]
     assert len(chunks) > 1 and all(len(text) <= 900 for text in chunks)
     assert all(text.split()[-1] in words.split() for text in chunks)  # no word cut in half
     assert chunks[1].split()[0] in chunks[0].split()  # consecutive chunks overlap
@@ -277,18 +274,18 @@ def test_invalid_uploads(client, name, content, status, code):
     response = upload(client, content, name=name)
     assert response.status_code == status
     assert response.json()['error_code'] == code
-    assert client.app.state.store.list_documents('alice') == []
+    assert client.app.state.store.list_documents('corpus:education') == []
 
 
 def test_upload_batch_validation_and_size_limit(client, monkeypatch):
-    response = client.post('/upload', files=[('files', ('a.txt', b'hello', 'text/plain')),
+    response = client.post('/uploadedu', headers={'X-Developer-Key': 'test-upload-key'}, files=[('files', ('a.txt', b'hello', 'text/plain')),
                                             ('files', ('b.pdf', b'invalid', 'application/pdf'))])
     assert response.status_code == 400
-    assert client.app.state.store.list_documents('alice') == []
+    assert client.app.state.store.list_documents('corpus:education') == []
     from app.services.document_service import DocumentService
     monkeypatch.setattr(DocumentService, 'MAX_FILE_SIZE_BYTES', 4)
     assert upload(client, b'12345').status_code == 413
-    assert client.app.state.store.list_documents('alice') == []
+    assert client.app.state.store.list_documents('corpus:education') == []
 
 
 def test_chat_uses_configured_gemini_client(monkeypatch, client):
@@ -333,7 +330,7 @@ def test_document_upload_is_the_only_source_entry_point(client):
     assert client.get('/get').status_code == 404
     advertised = client.get('/').json()['available_endpoints']
     assert '/ingest' not in advertised and '/get' not in advertised
-    assert '/upload' in advertised
+    assert '/uploadedu' in advertised
     assert upload(client, b'gamma uploaded document').status_code == 200
     identifier = conversation(client)
     response = ask(client, identifier, 'gamma')
@@ -353,7 +350,10 @@ def test_openapi_exposes_header_on_every_data_endpoint(client):
                 continue
             headers = [p for p in operation.get('parameters', []) if p['in'] == 'header']
             assert len(headers) == 1
-            assert headers[0]['name'] == 'X-User-ID' and headers[0]['required'] is True
+            if path in ('/uploadedu', '/uploadmedical') and operation is operations.get('post'):
+                assert headers[0]['name'] == 'X-Developer-Key'
+            else:
+                assert headers[0]['name'] == 'X-User-ID' and headers[0]['required'] is True
 
 
 def test_model_imports_share_one_user_scoped_contract():
@@ -382,4 +382,4 @@ def test_upload_chunks_reach_stage_one_retrieval(client, monkeypatch):
     assert response.status_code == 200
     assert 'The moon orbits Earth every 27 days.' in response.json()['reply']
     assert 'Answer in one sentence.' not in response.json()['reply']  # mock echoes only message content
-    assert owners == ['alice']
+    assert owners == ['corpus:education']

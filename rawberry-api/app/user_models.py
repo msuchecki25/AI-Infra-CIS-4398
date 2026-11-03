@@ -38,11 +38,16 @@ class SystemPromptResponse(BaseModel):
     prompt: str
 
 
+ChatDomain = Literal["medical", "education"]
+
+
 class ConversationRequest(RequestModel):
+    domain: ChatDomain
     title: str = Field(default="New conversation", min_length=1, max_length=200)
 
 
 class ConversationRecord(BaseModel):
+    domain: ChatDomain
     id: str
     user_id: str
     title: str
