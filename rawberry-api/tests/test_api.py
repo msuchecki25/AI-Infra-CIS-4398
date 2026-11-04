@@ -12,6 +12,7 @@ from app.main import create_app
 from app.repository import ConversationBusy, ResourceNotFound
 from app.services.chat_service import ChatService
 from app.store import InMemoryStore
+from docx_samples import make_docx
 from pdf_samples import make_pdf
 
 
@@ -223,6 +224,19 @@ def test_pdf_upload_chunks_each_page_with_its_page_number(client):
     assert upload(client, make_pdf(''), name='scan.pdf').json()[0]['chunk_count'] == 0
 
 
+def test_docx_upload_chunks_paragraphs_and_table_rows_in_order(client):
+    content = make_docx('alpha intro', table=[['Name', 'Score'], ['gamma', '42']])
+    response = upload(client, content, name='report.docx')
+    assert response.status_code == 200
+    assert response.json()[0]['chunk_count'] == 1
+    store = client.app.state.store
+    chunks = store.list_chunks('alice')
+    assert [(c['page_number'], c['text']) for c in chunks] == [(None, 'alpha intro\nName | Score\ngamma | 42')]
+    assert store.get_document_content('alice', response.json()[0]['document_id']) == content
+    # A DOCX with no text is stored but has nothing to search, like a scanned PDF.
+    assert upload(client, make_docx(), name='blank.docx').json()[0]['chunk_count'] == 0
+
+
 def test_long_text_is_split_on_word_boundaries_with_overlap(client):
     words = ' '.join(f'word{i}' for i in range(600))
     assert upload(client, words.encode()).status_code == 200
@@ -239,6 +253,7 @@ def test_long_text_is_split_on_word_boundaries_with_overlap(client):
     ('a.pdf', b'not pdf', 400, 'INVALID_FILE_CONTENT'),
     ('a.pdf', b'%PDF-1.7 damaged', 400, 'UNREADABLE_FILE'),
     ('a.docx', b'not zip', 400, 'INVALID_FILE_CONTENT'),
+    ('a.docx', b'PK\x03\x04 damaged', 400, 'UNREADABLE_FILE'),
 ])
 def test_invalid_uploads(client, name, content, status, code):
     response = upload(client, content, name=name)

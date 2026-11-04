@@ -25,16 +25,16 @@ are not supported. `/` and `/health` do not require user context.
 
 - Configurable PostgreSQL persistence; isolated in-memory mode without `DATABASE_URL`.
 - Multi-file uploads: PDF, DOCX, and UTF-8 TXT; 25 MiB per-file limit.
-- TXT and PDF text extraction and chunking (`app/ingestion.py`, shared with the root
-  `ingestion_pipeline.py`), with persisted Vertex AI embeddings and owner-filtered
-  pgvector search in PostgreSQL mode.
+- TXT, PDF, and DOCX text extraction and chunking (`app/ingestion.py`, shared with the
+  root `ingestion_pipeline.py` along with the file type, size, and signature rules),
+  with persisted Vertex AI embeddings and owner-filtered pgvector search in PostgreSQL mode.
 - Deterministic hash-vector retrieval in the isolated in-memory development mode.
 - Optional Vertex AI Gemini generation, or mock responses for local development.
 - Per-user response preferences.
 - Independent conversations with ordered user/assistant history and generation states.
 - SSE chat lifecycle events; generated tokens are not streamed individually.
 
-DOCX text extraction, OCR for scanned PDFs, citations, and sharing remain future work. Documents enter the RAG pipeline only through `/upload`; pasted-text
+OCR for scanned PDFs, citations, and sharing remain future work. Documents enter the RAG pipeline only through `/upload`; pasted-text
 submission is not supported. Chat messages remain part of conversation history.
 
 ## Run locally
@@ -97,11 +97,14 @@ with `{"prompt": "Keep answers concise."}`.
 ## Document-only RAG input
 
 Use `POST /upload` to submit one or more document files, and `GET /documents` to
-list your uploaded document metadata. TXT and PDF files produce searchable chunks
-of up to 900 characters, split on paragraph/sentence/word boundaries with 100
-characters of overlap. PDF chunks keep their 1-based page number. PDFs without a
-text layer (scans) and DOCX files are stored with no chunks. A PDF that cannot be
-parsed (damaged or password-protected) is rejected with `UNREADABLE_FILE`.
+list your uploaded document metadata. TXT, PDF, and DOCX files produce searchable
+chunks of up to 900 characters, split on paragraph/sentence/word boundaries with 100
+characters of overlap. PDF chunks keep their 1-based page number; DOCX has no pages,
+and its paragraphs and table rows are read in document order (headers, footers, and
+images are skipped). PDFs without a text layer (scans) are stored with no chunks. A
+damaged PDF or DOCX, or a password-protected PDF, is rejected with `UNREADABLE_FILE`.
+Password-protected DOCX files are not ZIP archives, so they fail the signature check
+with `INVALID_FILE_CONTENT`.
 Uploaded content is scoped to `X-User-ID`.
 
 `POST /ingest` and `GET /get` have been removed and return 404. Chat responses no
@@ -193,8 +196,8 @@ re-embedding chunks. Model errors return a safe 503; there is no silent hash fal
 
 Embedding happens before the upload transaction, then original bytes, chunks, and
 vectors are saved together. An embedding or database failure leaves no partial batch.
-Upload responses report `embedding_status=completed` only after commit. DOCX
-uploads and PDFs without extractable text remain `pending` with no chunks.
+Upload responses report `embedding_status=completed` only after commit. PDFs
+without extractable text and DOCX files without text remain `pending` with no chunks.
 Processing is synchronous; large batches may be slow and will need a worker in a
 later sprint.
 
