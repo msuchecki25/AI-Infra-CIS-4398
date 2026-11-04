@@ -18,7 +18,7 @@ def test_description_appears_after_first_success_and_stays_stable(endpoint):
     app = create_app(store=store)
     app.dependency_overrides[get_chat_service] = lambda: ChatService(store, llm_client=llm)
     with TestClient(app, headers={'X-User-ID': 'alice'}) as client:
-        created = client.post('/conversations', json={'title': 'Solar energy'}).json()
+        created = client.post('/conversations', json={'domain': 'education', 'title': 'Solar energy'}).json()
         assert created['description'] is None
         identifier = created['id']
         payload = {'conversation_id': identifier, 'message': 'How do solar panels work?'}

@@ -50,12 +50,13 @@ class PostgresRepository:
 
     def check_ready(self) -> None:
         with self._connection() as connection:
-            row = connection.execute(
-                "SELECT version FROM schema_migration WHERE version = %s",
-                ('005_conversation_descriptions',),
-            ).fetchone()
-            if row is None:
-                raise StorageError("Required database migration is missing")
+            for version in ('005_conversation_descriptions', '006_chat_domains'):
+                row = connection.execute(
+                    "SELECT version FROM schema_migration WHERE version = %s",
+                    (version,),
+                ).fetchone()
+                if row is None:
+                    raise StorageError("Required database migration is missing")
 
 
     def save_documents(self, user_id: str, documents: list[tuple[dict[str, Any], bytes, list[dict[str, Any]]]]) -> list[str]:
@@ -166,18 +167,18 @@ class PostgresRepository:
             else:
                 connection.execute("DELETE FROM user_preference WHERE user_id = %s", (user_id,))
 
-    def create_conversation(self, user_id: str, title: str) -> dict[str, Any]:
+    def create_conversation(self, user_id: str, title: str, domain: str = "education") -> dict[str, Any]:
         with self._connection() as connection:
             return connection.execute(
-                "INSERT INTO chat_session(public_id, user_id, title, created_at) "
-                "VALUES (%s, %s, %s, CURRENT_DATE) RETURNING public_id::text AS id, user_id, title, description, "
-                "created_ts AS created_at, updated_ts AS updated_at", (str(uuid4()), user_id, title),
+                "INSERT INTO chat_session(public_id, user_id, title, domain, created_at) "
+                "VALUES (%s, %s, %s, %s, CURRENT_DATE) RETURNING public_id::text AS id, user_id, title, domain, description, "
+                "created_ts AS created_at, updated_ts AS updated_at", (str(uuid4()), user_id, title, domain),
             ).fetchone()
 
     def list_conversations(self, user_id: str) -> list[dict[str, Any]]:
         with self._connection() as connection:
             return connection.execute(
-                "SELECT public_id::text AS id, user_id, title, description, created_ts AS created_at, updated_ts AS updated_at "
+                "SELECT public_id::text AS id, user_id, title, domain, description, created_ts AS created_at, updated_ts AS updated_at "
                 "FROM chat_session WHERE user_id = %s AND public_id IS NOT NULL "
                 "AND updated_ts > CURRENT_TIMESTAMP - (%s * INTERVAL '1 second') ORDER BY created_ts, id",
                 (user_id, CONVERSATION_TTL_SECONDS),
@@ -230,7 +231,10 @@ class PostgresRepository:
                 "RETURNING id::text AS id, prompt, reply, status, created_at, completed_at",
                 (str(uuid4()), session_id, ordinal, message),
             ).fetchone()
-            return {**turn, 'history': list(reversed(history))}
+            domain = connection.execute(
+                'SELECT domain FROM chat_session WHERE id = %s', (session_id,),
+            ).fetchone()['domain']
+            return {**turn, 'history': list(reversed(history)), 'domain': domain}
 
     def finish_turn(self, user_id: str, conversation_id: str, turn_id: str, reply: str | None) -> None:
         with self._connection() as connection:

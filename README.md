@@ -3,7 +3,7 @@
 RAWBerry provides backend API endpoints for document ingestion, chunking, RAG
 retrieval, and AI model integration.
 
-Documents enter RAG through `POST /upload`; pasted-text `/ingest` is not supported.
+Reviewed medical and education documents enter RAG through `POST /uploadmedical` and `POST /uploadedu` (developer-only); pasted-text `/ingest` is not supported.
 Chat questions and answers are stored separately as conversation history.
 
 Authentication, login, registration, and account management belong to the upstream
@@ -19,3 +19,21 @@ for the responsibility boundary and current limitations, the
 [run instructions](rawberry-api/run.md) for local Google Cloud configuration.
 ## Requirements
 - Python 3.12+
+
+
+Install all project dependencies from the repository root:
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+The root requirements include `rawberry-api/requirements.txt`, which owns shared
+backend and ingestion dependencies. Keep additional dependencies for project
+scripts and experiments in the root file. Add shared packages only to the API
+file so local project installs and API CI receive the same requirements.
+
+For an API-only installation (the same dependency set CI installs), run:
+
+```powershell
+python -m pip install -r rawberry-api/requirements.txt
+```

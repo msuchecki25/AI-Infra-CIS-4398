@@ -2,6 +2,7 @@ import json
 import logging
 
 from app.config import Settings, get_settings
+from app.corpora import corpus_owner
 from app.repository import Repository, StorageError, ConversationBusy
 from app.services.gemini_service import GeminiChatClient, MockChatClient
 from app.user_models import ChatRequest, ChatResponse
@@ -30,8 +31,8 @@ class ChatService:
         conversation_id = str(request.conversation_id)
         turn = turn if turn is not None else self.prepare_turn(user_id, request)
         try:
-            # Storage selects local hash search or persisted pgvector search, always within this user.
-            chunks = self.store.search_chunks(user_id, request.message, limit=3)
+            # Retrieval uses the conversation's fixed shared corpus, never the user's uploads.
+            chunks = self.store.search_chunks(corpus_owner(turn['domain']), request.message, limit=3)
             preferences = self.store.get_system_prompt(user_id)
             message = request.message
             # Only retrieved source passages enter document context; history is added separately below.

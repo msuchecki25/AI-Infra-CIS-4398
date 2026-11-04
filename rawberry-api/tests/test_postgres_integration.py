@@ -68,6 +68,9 @@ def database_url(monkeypatch):
             description_migration = (root / 'migrations/005_conversation_descriptions.sql').read_text()
             connection.execute(description_migration)
             connection.execute(description_migration)
+            domain_migration = (root / 'migrations/006_chat_domains.sql').read_text()
+            connection.execute(domain_migration)
+            connection.execute(domain_migration)
         yield url
     finally:
         with psycopg.connect(base_url, autocommit=True) as admin:
@@ -78,7 +81,7 @@ def test_data_survives_application_recreation_and_is_shared(database_url, monkey
     monkeypatch.setenv("DATABASE_URL", database_url)
     monkeypatch.setenv("USE_MOCK_CHAT", "true")
     with TestClient(create_app(), headers={'X-User-ID': 'alice'}) as first:
-        uploaded = first.post("/upload", files=[
+        uploaded = first.post("/uploadedu", headers={'X-Developer-Key': 'test-upload-key'}, files=[
             ("files", ("notes.txt", b"alpha beta gamma", "text/plain")),
             ("files", ("paper.pdf", SCANNED_PDF, "application/pdf")),
         ])
@@ -86,19 +89,19 @@ def test_data_survives_application_recreation_and_is_shared(database_url, monkey
         assert [d['embedding_status'] for d in uploaded.json()] == ['completed', 'pending']
         assert first.put("/me/system-prompt", json={"prompt": "Be concise"}).status_code == 200
         with TestClient(create_app(), headers={'X-User-ID': 'alice'}) as second:
-            assert len(second.get("/documents").json()) == 2
+            assert len(second.get("/uploadedu").json()) == 2
 
     # New app/connection after both previous apps have shut down.
     with TestClient(create_app(), headers={'X-User-ID': 'alice'}) as restarted:
-        documents = restarted.get("/documents").json()
+        documents = restarted.get("/uploadedu").json()
         assert [d["chunk_count"] for d in documents] == [1, 0]
         assert restarted.get("/me/system-prompt").json()["prompt"] == "Be concise"
         assert restarted.get("/me/system-prompt", headers={"X-User-ID": "bob"}).json()["prompt"] == ""
-        conversation_id = restarted.post('/conversations', json={'title': 'Persistent'}).json()['id']
+        conversation_id = restarted.post('/conversations', json={'domain': 'education', 'title': 'Persistent'}).json()['id']
         chat = restarted.post("/chat", json={"conversation_id": conversation_id, "message": "gamma?"})
         assert chat.status_code == 200
         assert "alpha beta gamma" in chat.json()["reply"]
-        assert restarted.app.state.store.get_document_content("alice", documents[1]["id"]) == SCANNED_PDF
+        assert restarted.app.state.store.get_document_content("corpus:education", documents[1]["id"]) == SCANNED_PDF
         assert restarted.put("/me/system-prompt", json={"prompt": ""}).status_code == 200
     with TestClient(create_app(), headers={'X-User-ID': 'alice'}) as final:
         assert final.get("/me/system-prompt").json()["prompt"] == ""
@@ -131,15 +134,15 @@ def test_failed_batch_rolls_back_documents_bytes_and_chunks(database_url):
 def test_uploaded_pdf_is_embedded_and_answers_chat_with_its_page(database_url):
     repository = PostgresRepository(database_url)
     with TestClient(create_app(store=repository), headers={'X-User-ID': 'alice'}) as client:
-        uploaded = client.post('/upload', files=[
+        uploaded = client.post('/uploadedu', headers={'X-Developer-Key': 'test-upload-key'}, files=[
             ('files', ('paper.pdf', make_pdf('intro page', 'zebra migration patterns'), 'application/pdf')),
         ])
         assert uploaded.status_code == 200
         assert uploaded.json()[0]['embedding_status'] == 'completed'
         assert uploaded.json()[0]['chunk_count'] == 2
-        results = repository.search_chunks('alice', 'zebra migration')
+        results = repository.search_chunks('corpus:education', 'zebra migration')
         assert (results[0]['text'], results[0]['page_number']) == ('zebra migration patterns', 2)
-        conversation_id = client.post('/conversations', json={'title': 'PDF'}).json()['id']
+        conversation_id = client.post('/conversations', json={'domain': 'education', 'title': 'PDF'}).json()['id']
         chat = client.post('/chat', json={'conversation_id': conversation_id, 'message': 'zebra migration?'})
         assert 'zebra migration patterns' in chat.json()['reply']
     assert repository.search_chunks('bob', 'zebra migration') == []
@@ -165,7 +168,7 @@ def test_ingestion_pipeline_indexes_documents_for_search(database_url):
 def test_invalid_api_batch_writes_nothing(database_url):
     repository = PostgresRepository(database_url)
     with TestClient(create_app(store=repository), headers={'X-User-ID': 'alice'}) as client:
-        response = client.post("/upload", files=[
+        response = client.post("/uploadedu", headers={'X-Developer-Key': 'test-upload-key'}, files=[
             ("files", ("notes.txt", b"valid text", "text/plain")),
             ("files", ("invalid.pdf", b"invalid", "application/pdf")),
         ])
@@ -294,7 +297,7 @@ def test_persistent_retrieval_reaches_gemini_with_only_owned_context(database_ur
     store = PostgresRepository(database_url, embeddings=VertexEmbeddingProvider(settings))
     with TestClient(create_app(store=store), headers={'X-User-ID': 'alice'}) as client:
         for owner, text in [('alice', selected), ('alice', irrelevant), ('bob', private)]:
-            uploaded = client.post('/upload', headers={'X-User-ID': owner}, files=[
+            uploaded = client.post('/uploadmedical' if owner == 'bob' else '/uploadedu', headers={'X-Developer-Key': 'test-upload-key'}, files=[
                 ('files', ('notes.txt', text.encode(), 'text/plain')),
             ])
             assert uploaded.status_code == 200
@@ -306,7 +309,7 @@ def test_persistent_retrieval_reaches_gemini_with_only_owned_context(database_ur
     app = create_app(store=restarted)
     app.dependency_overrides[get_chat_service] = lambda: ChatService(restarted, settings=settings)
     with TestClient(app, headers={'X-User-ID': 'alice'}) as client:
-        identifier = client.post('/conversations', json={'title': 'History'}).json()['id']
+        identifier = client.post('/conversations', json={'domain': 'education', 'title': 'History'}).json()['id']
         response = client.post(endpoint, json={'conversation_id': identifier, 'message': question})
         assert response.status_code == 200
         if endpoint == '/chat':
@@ -344,7 +347,7 @@ def test_no_match_does_not_inject_another_users_sources(database_url):
     app = create_app(store=store)
     app.dependency_overrides[get_chat_service] = lambda: ChatService(store, llm_client=llm)
     with TestClient(app, headers={'X-User-ID': 'alice'}) as client:
-        identifier = client.post('/conversations', json={}).json()['id']
+        identifier = client.post('/conversations', json={'domain': 'education'}).json()['id']
         response = client.post('/chat', json={'conversation_id': identifier, 'message': 'PAYROLL'})
         assert response.status_code == 200
         assert response.json()['reply'] == 'A response without source context.'
@@ -367,7 +370,7 @@ def test_query_embedding_failure_records_failed_turn_without_generation(database
     app = create_app(store=store)
     app.dependency_overrides[get_chat_service] = lambda: ChatService(store, llm_client=llm)
     with TestClient(app, headers={'X-User-ID': 'alice'}) as client:
-        identifier = client.post('/conversations', json={}).json()['id']
+        identifier = client.post('/conversations', json={'domain': 'education'}).json()['id']
         response = client.post(endpoint, json={'conversation_id': identifier, 'message': 'question'})
         if endpoint == '/chat':
             assert response.status_code == 503

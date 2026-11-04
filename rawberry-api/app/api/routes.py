@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, File, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
+from app.corpora import corpus_owner, require_developer
 from app.models import HealthResponse, RootResponse, UploadErrorResponse, UploadResponse
 from app.repository import Repository
 from app.services.chat_service import ChatService
@@ -33,7 +34,7 @@ def get_document_service(store: Repository = Depends(get_store)) -> DocumentServ
 @router.get('/', response_model=RootResponse)
 def read_root() -> RootResponse:
     return RootResponse(message='RAWBerry API is running', available_endpoints=[
-        '/health', '/documents', '/upload', '/chat', '/chat/stream',
+        '/health', '/uploadmedical', '/uploadedu', '/chat', '/chat/stream',
         '/me/system-prompt', '/conversations', '/conversations/{conversation_id}/messages',
     ])
 
@@ -43,20 +44,24 @@ def health() -> HealthResponse:
     return HealthResponse(status='healthy')
 
 
-@router.get('/documents', response_model=list[DocumentRecord])
-def get_documents(user_id: User, store: Repository = Depends(get_store)):
-    return store.list_documents(user_id)
+def register_corpus_routes(path: str, domain: str) -> None:
+    @router.get(path, response_model=list[DocumentRecord])
+    def get_documents(user_id: User, store: Repository = Depends(get_store)):
+        return store.list_documents(corpus_owner(domain))
+
+    @router.post(path, response_model=list[UploadResponse],
+                 dependencies=[Depends(require_developer)], responses={
+                     400: {'model': UploadErrorResponse}, 413: {'model': UploadErrorResponse},
+                 })
+    def upload_document(
+        files: Annotated[list[UploadFile], File(..., json_schema_extra={'items': {'type': 'string', 'format': 'binary'}})],
+        service: DocumentService = Depends(get_document_service),
+    ):
+        return service.upload_document(corpus_owner(domain), files)
 
 
-@router.post('/upload', response_model=list[UploadResponse], responses={
-    400: {'model': UploadErrorResponse}, 413: {'model': UploadErrorResponse},
-})
-def upload_document(
-    user_id: User,
-    files: Annotated[list[UploadFile], File(..., json_schema_extra={'items': {'type': 'string', 'format': 'binary'}})],
-    service: DocumentService = Depends(get_document_service),
-):
-    return service.upload_document(user_id, files)
+register_corpus_routes('/uploadmedical', 'medical')
+register_corpus_routes('/uploadedu', 'education')
 
 
 @router.get('/me/system-prompt', response_model=SystemPromptResponse)
@@ -73,7 +78,7 @@ def set_system_prompt(request: SystemPromptRequest, user_id: User, store: Reposi
 
 @router.post('/conversations', response_model=ConversationRecord, status_code=201)
 def create_conversation(request: ConversationRequest, user_id: User, store: Repository = Depends(get_store)):
-    return store.create_conversation(user_id, request.title)
+    return store.create_conversation(user_id, request.title, request.domain)
 
 
 @router.get('/conversations', response_model=list[ConversationRecord])

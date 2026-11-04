@@ -5,7 +5,7 @@ Authentication and account management belong to the upstream application.
 
 ## Authentication boundary and user context
 
-Every data endpoint requires one `X-User-ID` header supplied by the trusted upstream
+Every user data endpoint requires one `X-User-ID` header supplied by the trusted upstream
 backend or gateway. IDs are opaque, case-sensitive strings of 1-128 printable ASCII
 characters without spaces. `42`, `042`, `Alice`, and `alice` are distinct users.
 This provisional format must be confirmed with the upstream team before integration.
@@ -16,10 +16,9 @@ access to RAWBerry. This backend does not provide login, registration, password
 storage, or account sessions. Local Swagger testing lets you manually enter an ID;
 that is a development convenience, not proof of identity.
 
-RAWBerry uses this user context to scope documents, preferences,
-retrieved chunks and conversations. Another user's conversation
-returns the same 404 as a nonexistent conversation. Anonymous uploads and sharing
-are not supported. `/` and `/health` do not require user context.
+RAWBerry uses this user context to scope preferences and conversations.
+Documents and retrieved chunks belong to shared medical or education corpora. Another user's conversation
+returns the same 404 as a nonexistent conversation. Uploads require a separate developer API key; end users cannot upload. `/` and `/health` do not require user context.
 
 ## Current implementation
 
@@ -34,7 +33,7 @@ are not supported. `/` and `/health` do not require user context.
 - Independent conversations with ordered user/assistant history and generation states.
 - SSE chat lifecycle events; generated tokens are not streamed individually.
 
-DOCX text extraction, OCR for scanned PDFs, citations, and sharing remain future work. Documents enter the RAG pipeline only through `/upload`; pasted-text
+DOCX text extraction, OCR for scanned PDFs, citations, and sharing remain future work. Documents enter the RAG pipeline only through developer-only `POST /uploadmedical` and `POST /uploadedu`; pasted-text
 submission is not supported. Chat messages remain part of conversation history.
 
 ## Run locally
@@ -46,7 +45,7 @@ python -m uvicorn app.main:app --reload
 ```
 
 Swagger: <http://127.0.0.1:8000/docs>. Expand an endpoint, click **Try it out**, and
-enter `X-User-ID` (for example, `alice`). Use the file picker for `/upload`.
+enter `X-User-ID` (for example, `alice`). Developers use the file picker on either upload endpoint and supply `X-Developer-Key`.
 
 Without `DATABASE_URL`, all content and conversations disappear when the API
 process restarts and are not shared across processes. See the
@@ -59,15 +58,17 @@ This branch intentionally changes the prototype's user/session contract. Identit
 comes only from `X-User-ID`; JSON/form/query `userid`, `user_id`, and `owner_id` are
 not alternative identity sources. Request models reject extra fields; uploads reject
 legacy identity form fields. The old `/users/{userid}/system-prompt` route is removed.
-`data.window` and `data.agent` are removed from chat requests; specialized assistant
-selection is not implemented.
+`data.window` and `data.agent` are removed from chat requests. Select `domain`
+when creating a conversation; that choice stays fixed for its lifetime.
 
 | Endpoint | Behavior |
 | --- | --- |
 | `GET /` | Status and endpoint listing; no user header required |
 | `GET /health` | Process liveness; no user header required |
-| `POST /upload` | Upload multipart `files`; ownership comes from the header |
-| `GET /documents` | List only the current user's uploaded document metadata |
+| `POST /uploadmedical` | Developer-only upload of medical multipart `files` |
+| `POST /uploadedu` | Developer-only upload of education multipart `files` |
+| `GET /uploadmedical` | List shared medical document metadata; requires user header |
+| `GET /uploadedu` | List shared education document metadata; requires user header |
 | `GET /me/system-prompt` | Read the current user's preferences |
 | `PUT /me/system-prompt` | Update preferences; empty prompt clears them |
 | `POST /conversations` | Create an independent conversation |
@@ -79,7 +80,7 @@ selection is not implemented.
 Create a conversation with `POST /conversations`:
 
 ```json
-{"title": "Research questions"}
+{"title": "Research questions", "domain": "education"}
 ```
 
 Use its returned `id` as `conversation_id` in either chat endpoint:
@@ -87,7 +88,7 @@ Use its returned `id` as `conversation_id` in either chat endpoint:
 ```json
 {
   "conversation_id": "550e8400-e29b-41d4-a716-446655440000",
-  "message": "What does my document say?"
+  "message": "What do the education sources say?"
 }
 ```
 
@@ -102,13 +103,13 @@ not simulate tone or length preferences. No schema migration is needed.
 
 ## Document-only RAG input
 
-Use `POST /upload` to submit one or more document files, and `GET /documents` to
-list your uploaded document metadata. TXT and PDF files produce searchable chunks
+Developers use `POST /uploadmedical` or `POST /uploadedu` to submit source files.
+Users can list the matching corpus metadata with GET on the same paths. TXT and PDF files produce searchable chunks
 of up to 900 characters, split on paragraph/sentence/word boundaries with 100
 characters of overlap. PDF chunks keep their 1-based page number. PDFs without a
 text layer (scans) and DOCX files are stored with no chunks. A PDF that cannot be
 parsed (damaged or password-protected) is rejected with `UNREADABLE_FILE`.
-Uploaded content is scoped to `X-User-ID`.
+Uploaded content is scoped to the medical or education corpus, independently of user identity.
 
 `POST /ingest` and `GET /get` have been removed and return 404. Chat responses no
 longer include `recent_items`. Existing pasted-text database rows are retained as
@@ -132,7 +133,7 @@ conversations with null descriptions receive one on their next successful exchan
 there is no bulk backfill. Titles remain caller-supplied.
 
 Apply migration `005_conversation_descriptions.sql` after 004 before starting this
-API version. PostgreSQL startup requires migration 005. The migration adds a nullable
+API version. PostgreSQL startup requires migration 006 (see developer setup below). The migration adds a nullable
 column and length constraint without changing existing conversation content.
 
 Conversations expire after **24 hours of inactivity**, measured from the last
@@ -290,3 +291,44 @@ file through Swagger with the trusted development user header, confirm its
 that file using the returned conversation ID. Use `USE_MOCK_CHAT=false` for a real
 Gemini answer. PDF/DOCX extraction, historical backfill, and real-model retrieval
 quality evaluation are outside these tests.
+
+## Developer-managed preset chats
+
+Set `DEVELOPER_UPLOAD_API_KEY` to a secret available only to developers or the
+ingestion job. Send it in `X-Developer-Key` on uploads. Missing server configuration
+disables uploads with 503; missing or invalid credentials return 403. Use HTTPS
+and keep this secret out of browser code. No user header is required for uploads.
+
+Apply `../rawberry-db/migrations/006_chat_domains.sql` after migration 005 before
+starting the updated API with PostgreSQL. Existing conversations default to education.
+Existing personal documents remain stored but no longer participate in chat retrieval;
+developers must upload reviewed sources to the appropriate shared corpus. Review or
+retire existing conversation histories before launch if they contain personal sources.
+The application does not apply migrations automatically.
+
+Create one conversation per desired preset with `domain: "medical"` or
+`domain: "education"`, then use the same `/chat` or `/chat/stream` endpoint.
+The server retrieves only from that conversation's corpus. Users share sources,
+while their preferences and conversation histories stay private. Domain cannot be
+changed by a chat request; create a new conversation to switch modes.
+
+The shared corpora reuse repository owner filtering with reserved owners
+`corpus:medical` and `corpus:education`; these cannot be used as user identities.
+This works with both in-memory and PostgreSQL storage without duplicating the RAG
+pipeline. Uploading again adds documents; this API does not yet replace or version
+an existing corpus. In-memory uploads disappear at restart; production presets
+require PostgreSQL.
+
+Possible future API designs:
+
+- A generic developer endpoint such as `POST /admin/corpora/{domain}/documents`
+  and `GET /corpora/{domain}/documents` scales to more specialties. The current
+  two upload paths can remain aliases of the same ingestion implementation.
+- A deployment job or CLI can ingest reviewed, versioned document bundles without
+  exposing any HTTP upload endpoint. Chat requests still select a fixed corpus.
+- Separate indexes or services per domain provide stronger operational isolation
+  when access, retention, embedding models, or release schedules diverge.
+
+For two presets, one chat service and two explicitly scoped collections keep the
+implementation small. Avoid routing solely from the question's wording: an explicit
+preset choice gives predictable sources and keeps conversation history in one domain.

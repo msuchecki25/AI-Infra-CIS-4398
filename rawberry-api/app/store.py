@@ -62,9 +62,9 @@ class InMemoryStore:
             else:
                 self._system_prompts.pop(user_id, None)
 
-    def create_conversation(self, user_id: str, title: str) -> dict[str, Any]:
+    def create_conversation(self, user_id: str, title: str, domain: str = "education") -> dict[str, Any]:
         now = self._now()
-        conversation = dict(id=str(uuid4()), user_id=user_id, title=title, description=None,
+        conversation = dict(id=str(uuid4()), user_id=user_id, title=title, domain=domain, description=None,
                             created_at=now, updated_at=now)
         with self._lock:
             self._conversations[conversation['id']] = conversation
@@ -103,7 +103,7 @@ class InMemoryStore:
                         created_at=now, completed_at=None)
             turns.append(turn)
             conversation['updated_at'] = now
-            return {**deepcopy(turn), 'history': history}
+            return {**deepcopy(turn), 'history': history, 'domain': conversation['domain']}
 
     def finish_turn(self, user_id: str, conversation_id: str, turn_id: str, reply: str | None) -> None:
         with self._lock:

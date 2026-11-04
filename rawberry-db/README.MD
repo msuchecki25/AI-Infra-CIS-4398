@@ -14,7 +14,7 @@ user IDs, quarantined legacy ownership, and persistent conversation turns.
 Apply `migrations/003_vector_embeddings.sql` after migration 002 for generated
 embedding IDs and the persisted vector-search path. It preserves existing vectors
 and relationships; the API never applies this migration automatically. App startup
-requires migration 005 in PostgreSQL mode (see below). Existing unembedded chunks remain stored
+requires migration 006 in PostgreSQL mode (see below). Existing unembedded chunks remain stored
 but require their source TXT file to be uploaded again before semantic search can
 find them. Existing incompatible model/dimension vectors are excluded from retrieval.
 
@@ -52,7 +52,7 @@ See the API README for batching, generation protection, and deployment details.
 Apply `migrations/005_conversation_descriptions.sql` after 004 before deploying the
 description-enabled API. It adds nullable `chat_session.description`, limited to
 300 characters. Existing conversations remain null until their next successful
-exchange. The application requires migration 005 at startup; apply migrations
+exchange. The application requires migration 006 at startup; apply migrations
 before rolling out this version. Older API versions can continue to use the schema.
 
 ```powershell
@@ -67,3 +67,12 @@ Without that setting, database integration tests are skipped. Tests use determin
 instance must not be used as `TEST_DATABASE_URL`.
 
 See the [API README](../rawberry-api/README.md) for current behavior and limitations.
+
+Apply `migrations/006_chat_domains.sql` after 005 before starting the updated API.
+It adds the fixed medical/education domain to conversations. Existing conversations
+become education conversations. Personal document rows are preserved; re-ingest
+reviewed sources through the developer upload endpoints to populate shared corpora.
+
+```powershell
+psql "$env:DATABASE_URL" -v ON_ERROR_STOP=1 -f rawberry-db/migrations/006_chat_domains.sql
+```

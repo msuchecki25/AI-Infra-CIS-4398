@@ -8,6 +8,8 @@ async def require_user(
     user_id: Annotated[str, Header(alias="X-User-ID", min_length=1, max_length=128, pattern=r"^[!-~]+$")],
 ) -> str:
     """Validate upstream identity syntax; this does not authenticate the caller."""
+    if user_id.startswith("corpus:"):
+        raise HTTPException(422, "Reserved identity namespace.")
     if len(request.headers.getlist("x-user-id")) != 1:
         raise HTTPException(422, "Exactly one X-User-ID header is required.")
     if any(key in request.query_params for key in ("owner_id", "userid", "user_id")):
