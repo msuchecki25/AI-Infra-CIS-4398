@@ -50,12 +50,13 @@ class PostgresRepository:
 
     def check_ready(self) -> None:
         with self._connection() as connection:
-            row = connection.execute(
-                "SELECT version FROM schema_migration WHERE version = %s",
-                ('006_chat_domains',),
-            ).fetchone()
-            if row is None:
-                raise StorageError("Required database migration is missing")
+            for version in ('005_conversation_descriptions', '006_chat_domains'):
+                row = connection.execute(
+                    "SELECT version FROM schema_migration WHERE version = %s",
+                    (version,),
+                ).fetchone()
+                if row is None:
+                    raise StorageError("Required database migration is missing")
 
 
     def save_documents(self, user_id: str, documents: list[tuple[dict[str, Any], bytes, list[dict[str, Any]]]]) -> list[str]:

@@ -1,3 +1,7 @@
+# Shared backend dependencies; also installed directly by API CI.
+-r rawberry-api/requirements.txt
+
+# Additional dependencies for project scripts and experiments.
 aiohappyeyeballs==2.7.1
 aiohttp==3.14.5
 aiosignal==1.4.0
@@ -17,7 +21,6 @@ frozenlist==1.8.0
 google-api-core==2.42.0
 google-auth==2.58.0
 google-cloud-sql==0.1.1
-google-genai==2.24.0
 googleapis-common-protos==1.75.5
 greenlet==3.5.6
 grpcio==1.84.0
@@ -25,7 +28,6 @@ grpcio-status==1.84.0
 h11==0.16.0
 httpcore==1.0.9
 httpcore2==2.13.0
-httpx==0.28.1
 httpx2==2.13.0
 idna==3.20
 jsonpatch==1.33
@@ -34,7 +36,6 @@ langchain-core==1.6.3
 langchain-google-genai==4.4.0
 langchain-postgres==0.0.18
 langchain-protocol==0.0.19
-langchain-text-splitters==1.1.2
 langsmith==0.12.6
 lxml==6.1.3
 multidict==7.1.0
@@ -46,16 +47,11 @@ pgvector==0.3.6
 propcache==0.5.4
 proto-plus==1.29.0
 protobuf==7.36.2
-psycopg==3.3.5
-psycopg-binary==3.3.5
 psycopg-pool==3.3.1
 pyasn1==0.6.4
 pyasn1_modules==0.4.2
 pycparser==3.0
-pydantic==2.13.5
 pydantic_core==2.46.5
-pypdf==6.19.0
-python-docx==1.2.0
 python-dotenv==1.2.3
 PyYAML==6.0.3
 requests==2.34.2

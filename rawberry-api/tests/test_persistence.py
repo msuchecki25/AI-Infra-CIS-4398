@@ -66,3 +66,32 @@ def test_upload_schema_marks_array_items_as_binary_files():
     files = model["properties"]["files"]
     assert files["type"] == "array"
     assert files["items"]["format"] == "binary"
+
+
+@pytest.mark.parametrize('missing_version', [None, '005_conversation_descriptions', '006_chat_domains'])
+def test_readiness_requires_description_and_domain_migrations(missing_version):
+    from contextlib import contextmanager
+    from unittest.mock import MagicMock
+
+    connection = MagicMock()
+
+    def execute(query, parameters):
+        version, = parameters
+        result = MagicMock()
+        result.fetchone.return_value = None if version == missing_version else {'version': version}
+        return result
+
+    connection.execute.side_effect = execute
+
+    @contextmanager
+    def connect():
+        yield connection
+
+    repository = PostgresRepository('unused')
+    repository._connection = connect
+    if missing_version:
+        with pytest.raises(StorageError, match='Required database migration is missing'):
+            repository.check_ready()
+    else:
+        repository.check_ready()
+        assert connection.execute.call_count == 2

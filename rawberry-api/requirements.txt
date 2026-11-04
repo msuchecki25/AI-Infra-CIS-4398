@@ -1,3 +1,4 @@
+# Shared backend dependencies for the API and document ingestion.
 fastapi
 uvicorn
 pydantic
@@ -8,3 +9,4 @@ python-multipart
 psycopg[binary]>=3.2,<4
 langchain-text-splitters>=1.1,<2
 pypdf>=6,<7
+python-docx==1.2.0

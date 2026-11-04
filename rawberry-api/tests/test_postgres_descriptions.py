@@ -33,7 +33,8 @@ def test_description_persists_and_is_only_set_by_successful_owned_turn(database_
     assert restarted.list_conversations('alice')[0]['description'] == 'Question: Backfill question Answer: Backfill answer'
 
 
-def test_description_database_length_constraint_and_readiness(database_url):
+@pytest.mark.parametrize('missing_version', ['005_conversation_descriptions', '006_chat_domains'])
+def test_description_database_length_constraint_and_readiness(database_url, missing_version):
     repository = PostgresRepository(database_url)
     identifier = repository.create_conversation('alice', 'Bounded')['id']
     turn = repository.start_turn('alice', identifier, 'word ' * 4000)
@@ -43,6 +44,6 @@ def test_description_database_length_constraint_and_readiness(database_url):
         with psycopg.connect(database_url) as connection:
             connection.execute('UPDATE chat_session SET description = %s WHERE public_id = %s', ('x' * 301, identifier))
     with psycopg.connect(database_url) as connection:
-        connection.execute("DELETE FROM schema_migration WHERE version = '005_conversation_descriptions'")
+        connection.execute("DELETE FROM schema_migration WHERE version = %s", (missing_version,))
     with pytest.raises(StorageError, match='Required database migration is missing'):
         repository.check_ready()
