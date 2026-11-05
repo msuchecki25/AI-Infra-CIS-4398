@@ -18,7 +18,7 @@ from app.retrieval.embeddings import HashEmbeddingProvider
 from pdf_samples import make_pdf
 from test_api import exercise_isolation
 
-SCANNED_PDF = make_pdf('')  # valid PDF with no text layer
+TEXT_PDF = make_pdf('gamma from PDF')
 
 
 @pytest.fixture
@@ -80,30 +80,30 @@ def database_url(monkeypatch):
 def test_data_survives_application_recreation_and_is_shared(database_url, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", database_url)
     monkeypatch.setenv("USE_MOCK_CHAT", "true")
-    with TestClient(create_app(), headers={'X-User-ID': 'alice'}) as first:
+    with TestClient(create_app(), headers={'X-User-ID': 'alice', 'X-Developer-Key': 'test-upload-key'}) as first:
         uploaded = first.post("/uploadedu", headers={'X-Developer-Key': 'test-upload-key'}, files=[
             ("files", ("notes.txt", b"alpha beta gamma", "text/plain")),
-            ("files", ("paper.pdf", SCANNED_PDF, "application/pdf")),
+            ("files", ("paper.pdf", TEXT_PDF, "application/pdf")),
         ])
         assert uploaded.status_code == 200
-        assert [d['embedding_status'] for d in uploaded.json()] == ['completed', 'pending']
+        assert [d['embedding_status'] for d in uploaded.json()] == ['completed', 'completed']
         assert first.put("/me/system-prompt", json={"prompt": "Be concise"}).status_code == 200
-        with TestClient(create_app(), headers={'X-User-ID': 'alice'}) as second:
+        with TestClient(create_app(), headers={'X-User-ID': 'alice', 'X-Developer-Key': 'test-upload-key'}) as second:
             assert len(second.get("/uploadedu").json()) == 2
 
     # New app/connection after both previous apps have shut down.
-    with TestClient(create_app(), headers={'X-User-ID': 'alice'}) as restarted:
+    with TestClient(create_app(), headers={'X-User-ID': 'alice', 'X-Developer-Key': 'test-upload-key'}) as restarted:
         documents = restarted.get("/uploadedu").json()
-        assert [d["chunk_count"] for d in documents] == [1, 0]
+        assert [d["chunk_count"] for d in documents] == [1, 1]
         assert restarted.get("/me/system-prompt").json()["prompt"] == "Be concise"
         assert restarted.get("/me/system-prompt", headers={"X-User-ID": "bob"}).json()["prompt"] == ""
         conversation_id = restarted.post('/conversations', json={'domain': 'education', 'title': 'Persistent'}).json()['id']
         chat = restarted.post("/chat", json={"conversation_id": conversation_id, "message": "gamma?"})
         assert chat.status_code == 200
         assert "alpha beta gamma" in chat.json()["reply"]
-        assert restarted.app.state.store.get_document_content("corpus:education", documents[1]["id"]) == SCANNED_PDF
+        assert restarted.app.state.store.get_document_content("corpus:education", documents[1]["id"]) == TEXT_PDF
         assert restarted.put("/me/system-prompt", json={"prompt": ""}).status_code == 200
-    with TestClient(create_app(), headers={'X-User-ID': 'alice'}) as final:
+    with TestClient(create_app(), headers={'X-User-ID': 'alice', 'X-Developer-Key': 'test-upload-key'}) as final:
         assert final.get("/me/system-prompt").json()["prompt"] == ""
         history = final.get('/conversations/' + conversation_id + '/messages').json()
         assert [message['role'] for message in history] == ['user', 'assistant']

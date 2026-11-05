@@ -7,6 +7,12 @@ from io import BytesIO
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+
+from bisect import bisect_right
+import re
+
+from app.services.document_cleaner import clean_pages
+
 from app.user_models import DocumentChunk
 
 MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024
@@ -79,14 +85,120 @@ def _extract_docx_text(raw_bytes: bytes) -> str:
     return "\n".join(blocks).replace("\x00", "")
 
 
-def split_pages(pages: list[tuple[int | None, str]], document_id: str) -> list[DocumentChunk]:
-    """Split page by page so each chunk keeps its page; indexes run across the document."""
-    splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
+
+def split_pages(
+    pages: list[tuple[int | None, str]],
+    document_id: str,
+    *,
+    line_sources: list[tuple[int, ...]] | None = None,
+    source_map: list[dict] | None = None,
+) -> list[DocumentChunk]:
+    """Split text and optionally record original source locations."""
+
+    if source_map is not None:
+        if line_sources is None or len(line_sources) != len(pages):
+            raise ValueError("Source lines must match extracted pages.")
+
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP,
+        add_start_index=source_map is not None,
+    )
+
     chunks: list[DocumentChunk] = []
-    for page_number, text in pages:
-        for piece in splitter.split_text(text):
+
+    for page_index, (page_number, text) in enumerate(pages):
+        if source_map is None:
+            pieces = [
+                (piece, None)
+                for piece in splitter.split_text(text)
+            ]
+        else:
+            documents = splitter.create_documents([text])
+            pieces = [
+                (
+                    document.page_content,
+                    document.metadata.get("start_index"),
+                )
+                for document in documents
+            ]
+
+            line_starts = [0]
+            line_starts.extend(
+                match.end()
+                for match in re.finditer("\n", text)
+            )
+
+        for piece, start in pieces:
             piece = piece.strip()
-            if piece:
-                chunks.append(DocumentChunk(document_id=document_id, chunk_index=len(chunks),
-                                            page_number=page_number, text=piece, status="pending"))
+
+            if not piece:
+                continue
+
+            chunk_index = len(chunks)
+
+            chunks.append(
+                DocumentChunk(
+                    document_id=document_id,
+                    chunk_index=chunk_index,
+                    page_number=page_number,
+                    text=piece,
+                    status="pending",
+                )
+            )
+
+            if source_map is not None:
+                if start is None or start < 0:
+                    raise ValueError(
+                        "Could not locate chunk in cleaned text."
+                    )
+
+                lines = line_sources[page_index]
+
+                first = bisect_right(line_starts, start) - 1
+                last = bisect_right(
+                    line_starts,
+                    start + len(piece) - 1,
+                ) - 1
+
+                source_map.append({
+                    "chunk_index": chunk_index,
+                    "page_number": page_number,
+                    "source_start_line": lines[first],
+                    "source_end_line": lines[last],
+                })
+
     return chunks
+
+
+def prepare_document(
+    pages: list[tuple[int | None, str]],
+    document_id: str,
+) -> tuple[list[DocumentChunk], dict]:
+    """Clean extracted text before creating chunks."""
+
+    cleaned = clean_pages(pages)
+
+    source_map = []
+
+    chunks = split_pages(
+        [
+            (page.page_number, page.text)
+            for page in cleaned.pages
+        ],
+        document_id,
+        line_sources=[
+            page.source_lines
+            for page in cleaned.pages
+        ],
+        source_map=source_map,
+    )
+
+    metadata = {
+        "version": 1,
+        "warnings": list(cleaned.warnings),
+        "chunk_source_map": source_map,
+    }
+
+    return chunks, metadata
+

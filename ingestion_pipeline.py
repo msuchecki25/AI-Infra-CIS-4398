@@ -3,6 +3,10 @@ import os
 import re
 from uuid import uuid4
 
+from app.ingestion import prepare_document
+from app.services.document_cleaner import EmptyExtractedText
+
+
 # app resolves to rawberry-api/app through the repository-level app package
 from app.config import get_settings
 # the /upload endpoint uses the same file rules, extraction and chunking
@@ -65,12 +69,17 @@ def split_documents(pages, document_id):
 
 
 def ingest_document(repository, user_id, path, raw_bytes, pages):
+ 
     document_id = str(uuid4())
-    #chunking text
-    chunks = split_documents(pages, document_id)
-    if not chunks:
-        print(f"No text extracted from {path}, skipping")
+
+    try:
+        chunks, cleaning_metadata = prepare_document(
+            pages, document_id
+        )
+    except EmptyExtractedText:
+        print(f"No readable text extracted from {path}, skipping")
         return None
+
 
     document = DocumentRecord(
         id=document_id,
@@ -80,7 +89,13 @@ def ingest_document(repository, user_id, path, raw_bytes, pages):
         size_bytes=len(raw_bytes),
         chunk_count=len(chunks),
         embedding_status="pending",
-        metadata={"source": "ingestion_pipeline", "path": path},
+        
+        metadata={
+            "source": "ingestion_pipeline",
+            "path": path,
+            "cleaning": cleaning_metadata,
+        },
+
     )
     # same (document, bytes, chunks) shape the /upload endpoint saves
     # the repository embeds every chunk with the pinned Vertex model before writing,

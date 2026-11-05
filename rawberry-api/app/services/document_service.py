@@ -6,7 +6,15 @@ from uuid import uuid4
 from fastapi import HTTPException, UploadFile, status
 
 from app import ingestion
-from app.ingestion import InvalidFileContent, UnreadableDocument, extract_pages, split_pages
+
+from app.ingestion import (
+    InvalidFileContent,
+    UnreadableDocument,
+    extract_pages,
+    prepare_document,
+)
+from app.services.document_cleaner import EmptyExtractedText
+
 from app.models import UploadResponse
 from app.user_models import DocumentRecord
 from app.repository import Repository
@@ -90,9 +98,27 @@ class DocumentService:
 
         responses: list[UploadResponse] = []
         documents: list[tuple[dict, bytes, list[dict]]] = []
+        
         for filename, ext, raw_bytes, pages in validated_files:
             document_id = str(uuid4())
-            chunks = split_pages(pages, document_id)
+
+            try:
+                chunks, cleaning_metadata = prepare_document(
+                    pages, document_id
+                )
+            except EmptyExtractedText as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "success": False,
+                        "error_code": "EMPTY_EXTRACTED_TEXT",
+                        "message": (
+                            "No readable text could be extracted "
+                            "from the document."
+                        ),
+                    },
+                ) from exc
+
             document = DocumentRecord(
                 id=document_id,
                 filename=filename,
@@ -101,7 +127,12 @@ class DocumentService:
                 user_id=user_id,
                 chunk_count=len(chunks),
                 embedding_status="pending",
-                metadata={"source": "upload_endpoint"},
+                
+                metadata={
+                    "source": "upload_endpoint",
+                    "cleaning": cleaning_metadata,
+                },
+
             )
 
             documents.append((document.model_dump(), raw_bytes, [chunk.model_dump() for chunk in chunks]))

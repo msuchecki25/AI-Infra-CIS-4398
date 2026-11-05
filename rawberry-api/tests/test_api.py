@@ -250,7 +250,11 @@ def test_pdf_upload_chunks_each_page_with_its_page_number(client):
         (0, 1, 'alpha first page'), (1, 3, 'gamma third page')]
     assert client.app.state.store.search_chunks('corpus:education', 'gamma')[0]['page_number'] == 3
     # A PDF without a text layer (e.g. a scan) is stored but has nothing to search yet.
-    assert upload(client, make_pdf(''), name='scan.pdf').json()[0]['chunk_count'] == 0
+    
+    scan = upload(client, make_pdf(''), name='scan.pdf')
+    assert scan.status_code == 400
+    assert scan.json()['error_code'] == 'EMPTY_EXTRACTED_TEXT'
+
 
 
 def test_long_text_is_split_on_word_boundaries_with_overlap(client):

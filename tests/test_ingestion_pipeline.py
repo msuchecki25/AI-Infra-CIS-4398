@@ -1,5 +1,6 @@
 """Ingestion output must match the contract the upload endpoint persists."""
 
+from importlib.resources import path
 from pathlib import Path
 
 import pytest
@@ -81,7 +82,11 @@ def test_ingest_document_saves_one_upload_shaped_batch():
     assert set(chunks[0]) == {"document_id", "chunk_index", "page_number", "text", "status"}
     assert all(c["page_number"] is None for c in chunks)
     assert store.list_documents("bob") == []
-    assert store.search_chunks("alice", Path(path).read_text().split()[0])
+    assert store.search_chunks(
+        "alice",
+        Path(path).read_text(encoding="utf-8").split()[0]
+    )
+
 
 
 def test_ingest_document_without_text_writes_nothing():
